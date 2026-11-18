@@ -231,6 +231,13 @@ export interface PagedLayoutOptions {
   /** Between items: one number for both axes, or each. @default 0 */
   gap?: number | { x: number; y: number };
   /**
+   * Between one page's items and the next page's, along `direction`: half of it
+   * is left clear at each end of a page, so the last items of one page don't
+   * touch the first of the next while the grid is between them. The pages are
+   * still a room apart, so the grid snaps to them as before. @default the gap along `direction`
+   */
+  pageGap?: number;
+  /**
    * An item's size. By default each one takes an equal share of the page.
    * `{ aspect }` — width ÷ height, the width being a column's share of the page.
    * `{ width, height }` — fixed, in points. Either way a page is as big as the room,
@@ -241,7 +248,8 @@ export interface PagedLayoutOptions {
 
 /**
  * Pages of `columns × rows` items, each page as big as the room, one after
- * another along `direction`. The grid snaps to whole pages. Like `gridLayout`,
+ * another along `direction`, with `pageGap` between a page's items and the next's.
+ * The grid snaps to whole pages. Like `gridLayout`,
  * it works every slot, and which ones are in a region, out from the index.
  * Give the grid no start or end inset along its scroll axis: a page is the room.
  */
@@ -256,16 +264,20 @@ export function pagedLayout(options: PagedLayoutOptions): ReflowLayout {
   const gap = typeof options.gap === 'number' ? { x: options.gap, y: options.gap } : (options.gap ?? { x: 0, y: 0 });
   const horizontal = direction === 'horizontal';
   const perPage = columns * rows;
+  const pageGap = Math.max(options.pageGap ?? (horizontal ? gap.x : gap.y), 0);
 
   return (data, room) => {
     const count = data.length;
     const stride = horizontal ? room.width : room.height;
+    // Half the page gap is left clear at each end of a page, along the way the pages go.
+    const lead = { x: horizontal ? pageGap / 2 : 0, y: horizontal ? 0 : pageGap / 2 };
+    const space = { width: Math.max(room.width - 2 * lead.x, 0), height: Math.max(room.height - 2 * lead.y, 0) };
     let item: Size;
     if (card && 'width' in card) {
       item = { width: card.width, height: card.height };
     } else {
-      const width = Math.max((room.width - (columns - 1) * gap.x) / columns, 0);
-      item = card ? { width, height: width / card.aspect } : { width, height: Math.max((room.height - (rows - 1) * gap.y) / rows, 0) };
+      const width = Math.max((space.width - (columns - 1) * gap.x) / columns, 0);
+      item = card ? { width, height: width / card.aspect } : { width, height: Math.max((space.height - (rows - 1) * gap.y) / rows, 0) };
     }
     const pitch = { x: item.width + gap.x, y: item.height + gap.y };
     const pageCount = Math.ceil(count / perPage);
@@ -274,8 +286,8 @@ export function pagedLayout(options: PagedLayoutOptions): ReflowLayout {
       const page = Math.floor(i / perPage);
       const k = i % perPage;
       return {
-        x: (horizontal ? page * stride : 0) + (k % columns) * pitch.x,
-        y: (horizontal ? 0 : page * stride) + Math.floor(k / columns) * pitch.y,
+        x: (horizontal ? page * stride : 0) + lead.x + (k % columns) * pitch.x,
+        y: (horizontal ? 0 : page * stride) + lead.y + Math.floor(k / columns) * pitch.y,
         ...item,
       };
     };
@@ -298,8 +310,8 @@ export function pagedLayout(options: PagedLayoutOptions): ReflowLayout {
         for (let page = Math.max(Math.floor(lo / stride), 0); page <= last; page++) {
           // The region in this page's own coordinates.
           const shift = page * stride;
-          const [c0, c1] = span(region.x0 - (horizontal ? shift : 0), region.x1 - (horizontal ? shift : 0), item.width, pitch.x, columns);
-          const [r0, r1] = span(region.y0 - (horizontal ? 0 : shift), region.y1 - (horizontal ? 0 : shift), item.height, pitch.y, rows);
+          const [c0, c1] = span(region.x0 - (horizontal ? shift : 0) - lead.x, region.x1 - (horizontal ? shift : 0) - lead.x, item.width, pitch.x, columns);
+          const [r0, r1] = span(region.y0 - (horizontal ? 0 : shift) - lead.y, region.y1 - (horizontal ? 0 : shift) - lead.y, item.height, pitch.y, rows);
           for (let row = r0; row <= r1; row++) {
             for (let column = c0; column <= c1; column++) {
               const i = page * perPage + row * columns + column;

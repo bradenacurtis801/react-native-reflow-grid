@@ -234,8 +234,8 @@ describe('masonryLayout', () => {
 describe('pagedLayout', () => {
   // 2 columns × 3 rows a page, in a 200 × 300 room with 10pt gaps: a card is 95 × 93.33.
   const room = { width: 200, height: 300 };
-  const horizontal = pagedLayout({ direction: 'horizontal', columns: 2, rows: 3, gap: 10 });
-  const vertical = pagedLayout({ direction: 'vertical', columns: 2, rows: 3, gap: 10 });
+  const horizontal = pagedLayout({ direction: 'horizontal', columns: 2, rows: 3, gap: 10, pageGap: 0 });
+  const vertical = pagedLayout({ direction: 'vertical', columns: 2, rows: 3, gap: 10, pageGap: 0 });
   const CARD_H = (300 - 20) / 3;
 
   it('fills a page a row at a time, then starts the next one a room further along', () => {
@@ -269,10 +269,35 @@ describe('pagedLayout', () => {
     expect(result.indicesIn({ x0: -1e9, x1: 1e9, y0: -1e9, y1: 1e9 })).toEqual([]);
   });
 
+  it('leaves a page gap between the items of one page and the next, half at each end of a page', () => {
+    // The default is the gap along the way the pages go: 10. Items sit 5 in from each end of a page.
+    const result = pagedLayout({ direction: 'horizontal', columns: 2, rows: 3, gap: 10 })(items(8), room);
+    const rects = rectsOf(result, 8);
+    expect(rects[0]).toMatchObject({ x: 5, width: 90 });
+    expect(rects[1]).toMatchObject({ x: 105, width: 90 });
+    // Page one's right edge is at 195; page two's items start at 205: a gap of 10, as between its own columns.
+    expect(rects[6]!.x - (rects[1]!.x + rects[1]!.width)).toBe(10);
+    // The pages are still a room apart, so the grid snaps to them as it did.
+    expect(result.pages).toMatchObject({ stride: 200 });
+    expect(result.size).toEqual({ width: 400, height: 300 });
+  });
+
+  it('takes the page gap from the option, and only along the way the pages go', () => {
+    const wide = pagedLayout({ direction: 'horizontal', columns: 2, rows: 3, gap: 10, pageGap: 40 })(items(8), room);
+    expect(wide.rectOf(0)).toMatchObject({ x: 20, y: 0, width: 75 });
+    const down = pagedLayout({ direction: 'vertical', columns: 2, rows: 3, gap: 10, pageGap: 40 })(items(8), room);
+    expect(down.rectOf(0)).toMatchObject({ x: 0, y: 20, width: 95 });
+    expect(down.rectOf(6)).toMatchObject({ y: 320 });
+    // Cards of a fixed size sit in from the start of a page, too.
+    const fixed = pagedLayout({ direction: 'horizontal', columns: 2, rows: 1, gap: 10, pageGap: 20, card: { width: 30, height: 30 } })(items(3), room);
+    expect(fixed.rectOf(0).x).toBe(10);
+    expect(fixed.rectOf(2).x).toBe(210);
+  });
+
   it('can give the cards an aspect ratio or a fixed size', () => {
     const aspect = pagedLayout({ direction: 'horizontal', columns: 2, rows: 2, card: { aspect: 0.5 } })(items(1), room);
     expect(aspect.rectOf(0)).toMatchObject({ width: 100, height: 200 });
-    const fixed = pagedLayout({ direction: 'vertical', columns: 3, rows: 2, gap: 4, card: { width: 40, height: 30 } })(items(4), room);
+    const fixed = pagedLayout({ direction: 'vertical', columns: 3, rows: 2, gap: 4, pageGap: 0, card: { width: 40, height: 30 } })(items(4), room);
     expect(rectsOf(fixed, 4).map((r) => [r.x, r.y, r.width, r.height])).toEqual([
       [0, 0, 40, 30],
       [44, 0, 40, 30],
@@ -287,7 +312,11 @@ describe('pagedLayout', () => {
       const y0 = ((k * 71) % 700) - 80;
       return { x0, x1: x0 + 15 + ((k * 37) % 400), y0, y1: y0 + 15 + ((k * 23) % 500) };
     });
-    for (const layout of [horizontal, vertical]) {
+    const spaced = [
+      pagedLayout({ direction: 'horizontal', columns: 2, rows: 3, gap: 10 }),
+      pagedLayout({ direction: 'vertical', columns: 3, rows: 2, gap: { x: 4, y: 8 }, pageGap: 30 }),
+    ];
+    for (const layout of [horizontal, vertical, ...spaced]) {
       for (const count of [0, 1, 6, 7, 20, 50]) {
         const result = layout(items(count), room);
         for (const region of regions) expect(result.indicesIn(region)).toEqual(scan(result, count, region));
