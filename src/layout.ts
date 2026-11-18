@@ -183,42 +183,99 @@ export function gridLayout(options: GridLayoutOptions): ReflowLayout {
   };
 }
 
+/** What a masonry layout keeps from its last call, to carry on from. */
+interface MasonryBuilt<T> {
+  data: readonly T[];
+  /** The width a column had. */
+  width: number;
+  rects: Rect[];
+  /** The column each item went in. */
+  columnOf: number[];
+  /** Where each column's next item would go before item `64 × j`, for each `j` (and `end`: after the last). */
+  checkpoints: number[][];
+  end: number[];
+  result: ReflowResult;
+}
+
+/** A masonry layout keeps where the columns stood before every this many items, to start again from the one before a change. */
+const MASONRY_CHECKPOINT = 64;
+
 export interface MasonryLayoutOptions<T> {
   /** How many columns share the room's width. */
   columns: number;
   /** Between items: one number for both axes, or each. @default 0 */
   gap?: number | { x: number; y: number };
-  /** An item's height, given the width its column gives it (an image's aspect ratio, a text's length…). */
+  /**
+   * An item's height, given the width its column gives it (an image's aspect
+   * ratio, a text's length…). It must depend only on its arguments: the layout
+   * doesn't ask again for an item it has already placed, as long as the item is the
+   * same object at the same index, so replace an item to change its height rather
+   * than changing it in place.
+   */
   heightOf: (item: T, width: number, index: number) => number;
 }
 
 /**
  * Columns of equal width, items of any height: each item goes under the
  * shortest column so far (the leftmost, on a tie), in order. Vertical scroll.
- * The rects are built for every item, so a change of `data` costs one pass
- * over it.
+ *
+ * It remembers its last result. When `data` changes, the items before the first
+ * one that differs (by reference) keep their places and `heightOf` is not asked
+ * about them again, so adding at the end, or changing one item far down a long
+ * list, costs only what follows. A change of the room's width places everything
+ * again. Memoize the layout: a new one starts with nothing remembered.
  */
 export function masonryLayout<T>({ columns, gap: gapOption, heightOf }: MasonryLayoutOptions<T>): ReflowLayout<T> {
   if (!Number.isInteger(columns) || columns < 1) throw new Error(`masonryLayout: columns must be a whole number of 1 or more, got ${columns}`);
   const gap = typeof gapOption === 'number' ? { x: gapOption, y: gapOption } : (gapOption ?? { x: 0, y: 0 });
+  let last: MasonryBuilt<T> | undefined;
 
   return (data, room) => {
     const width = Math.max((room.width - (columns - 1) * gap.x) / columns, 0);
-    // Where each column's next item goes.
-    const next = new Array<number>(columns).fill(0);
-    const rects = data.map((item, index): Rect => {
+    // How many items from the start are as they were.
+    let same = 0;
+    const prev = last && last.width === width ? last : undefined;
+    if (prev) {
+      const limit = Math.min(prev.data.length, data.length);
+      while (same < limit && prev.data[same] === data[same]) same++;
+      if (same === data.length && same === prev.data.length) return prev.result;
+    }
+
+    const rects: Rect[] = prev ? prev.rects.slice(0, same) : [];
+    const columnOf: number[] = prev ? prev.columnOf.slice(0, same) : [];
+    // Where each column's next item goes, as it stood before item `same`: from the last checkpoint at or before it.
+    let next: number[];
+    let checkpoints: number[][];
+    if (prev && same > 0) {
+      const j = Math.floor((same - 1) / MASONRY_CHECKPOINT);
+      checkpoints = prev.checkpoints.slice(0, j + 1);
+      next = same === prev.data.length ? prev.end.slice() : checkpoints[j]!.slice();
+      if (same !== prev.data.length) {
+        for (let i = j * MASONRY_CHECKPOINT; i < same; i++) next[columnOf[i]!] = rects[i]!.y + rects[i]!.height + gap.y;
+      }
+    } else {
+      checkpoints = [];
+      next = new Array<number>(columns).fill(0);
+    }
+
+    for (let index = same; index < data.length; index++) {
+      if (index % MASONRY_CHECKPOINT === 0) checkpoints[index / MASONRY_CHECKPOINT] = next.slice();
       let column = 0;
       for (let c = 1; c < columns; c++) if (next[c]! < next[column]!) column = c;
-      const height = heightOf(item, width, index);
+      const height = heightOf(data[index]!, width, index);
       const rect = { x: column * (width + gap.x), y: next[column]!, width, height };
       next[column] = rect.y + height + gap.y;
-      return rect;
-    });
+      rects.push(rect);
+      columnOf.push(column);
+    }
+
     const empty = data.length === 0;
-    return layoutFromRects(rects, {
+    const result = layoutFromRects(rects, {
       width: empty ? 0 : columns * width + (columns - 1) * gap.x,
       height: empty ? 0 : Math.max(...next) - gap.y,
     });
+    last = { data, width, rects, columnOf, checkpoints, end: next, result };
+    return result;
   };
 }
 

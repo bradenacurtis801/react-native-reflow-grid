@@ -229,6 +229,141 @@ describe('masonryLayout', () => {
   it('refuses a column count that is not a whole number of 1 or more', () => {
     expect(() => masonryLayout({ columns: 0, heightOf: () => 1 })).toThrow();
   });
+
+  describe('carrying on from the first change', () => {
+    interface Card {
+      h: number;
+    }
+    const card = (h: number): Card => ({ h });
+    /** A layout that records which indices it was asked the height of. */
+    const counting = (columns = 3) => {
+      const asked: number[] = [];
+      const layout = masonryLayout<Card>({ columns, gap: 10, heightOf: (c, _w, i) => (asked.push(i), c.h) });
+      return { layout, asked, take: () => asked.splice(0) };
+    };
+    const room3 = { width: 320, height: 600 };
+    /** What a layout with nothing remembered makes of `data`. */
+    const fresh = (data: readonly Card[], columns = 3, size = room3) =>
+      masonryLayout<Card>({ columns, gap: 10, heightOf: (c) => c.h })(data, size);
+    const same = (a: ReflowResult, b: ReflowResult, n: number) => {
+      expect(a.size).toEqual(b.size);
+      expect(rectsOf(a, n)).toEqual(rectsOf(b, n));
+    };
+    // Enough of them to cross several of its checkpoints.
+    const cards = Array.from({ length: 150 }, (_, i) => card(20 + ((i * 37) % 80)));
+
+    it('asks about every item the first time', () => {
+      const { layout, take } = counting();
+      layout(cards, room3);
+      expect(take()).toEqual(cards.map((_, i) => i));
+    });
+
+    it('asks only about what is added at the end', () => {
+      const { layout, take } = counting();
+      layout(cards, room3);
+      take();
+      const more = [...cards, card(55), card(65)];
+      const result = layout(more, room3);
+      expect(take()).toEqual([150, 151]);
+      same(result, fresh(more), more.length);
+    });
+
+    it('asks from the item that changed, not before it', () => {
+      const { layout, take } = counting();
+      layout(cards, room3);
+      take();
+      for (const at of [0, 1, 63, 64, 65, 100, 149]) {
+        const changed = cards.map((c, i) => (i === at ? card(c.h + 33) : c));
+        const result = layout(changed, room3);
+        expect(take()).toEqual(Array.from({ length: 150 - at }, (_, k) => at + k));
+        same(result, fresh(changed), 150);
+        // Back again: the same as the first.
+        same(layout(cards, room3), fresh(cards), 150);
+        take();
+      }
+    });
+
+    it('asks from where one was put in the middle, as everything after it moved', () => {
+      const { layout, take } = counting();
+      layout(cards, room3);
+      take();
+      const put = [...cards.slice(0, 70), card(45), ...cards.slice(70)];
+      const result = layout(put, room3);
+      expect(take()).toEqual(Array.from({ length: 81 }, (_, k) => 70 + k));
+      same(result, fresh(put), put.length);
+    });
+
+    it('asks nothing when items are taken off the end', () => {
+      const { layout, take } = counting();
+      layout(cards, room3);
+      take();
+      for (const n of [149, 128, 127, 64, 63, 1, 0]) {
+        const fewer = cards.slice(0, n);
+        const result = layout(fewer, room3);
+        expect(take()).toEqual([]);
+        same(result, fresh(fewer), n);
+      }
+    });
+
+    it('asks nothing, and gives the same result, for the same items in a new array', () => {
+      const { layout, take } = counting();
+      const first = layout(cards, room3);
+      take();
+      expect(layout([...cards], room3)).toBe(first);
+      expect(take()).toEqual([]);
+    });
+
+    it('places everything again when the width changes', () => {
+      const { layout, take } = counting();
+      layout(cards, room3);
+      take();
+      const narrow = { width: 200, height: 600 };
+      const result = layout(cards, narrow);
+      expect(take()).toHaveLength(150);
+      same(result, fresh(cards, 3, narrow), 150);
+      // A change of height alone is no change.
+      layout(cards, { width: 200, height: 900 });
+      expect(take()).toEqual([]);
+    });
+
+    it('does not change a result it gave before', () => {
+      const { layout } = counting();
+      const before = layout(cards, room3);
+      const was = rectsOf(before, 150);
+      layout([...cards.slice(0, 10), card(500), ...cards.slice(11)], room3);
+      layout(cards.slice(0, 5), room3);
+      expect(rectsOf(before, 150)).toEqual(was);
+      expect(before.size).toEqual(fresh(cards).size);
+    });
+
+    it('comes to the same as starting afresh through any run of changes', () => {
+      for (const columns of [1, 2, 3, 5]) {
+        const { layout } = counting(columns);
+        let data = cards.slice(0, 40);
+        // A fixed sequence of edits, so a failure can be had again.
+        let seed = columns * 7919;
+        const random = (n: number) => ((seed = (seed * 1103515245 + 12345) & 0x7fffffff), seed % n);
+        for (let step = 0; step < 60; step++) {
+          const at = random(data.length + 1);
+          switch (random(4)) {
+            case 0:
+              data = [...data, card(10 + random(90))];
+              break;
+            case 1:
+              data = [...data.slice(0, at), card(10 + random(90)), ...data.slice(at)];
+              break;
+            case 2:
+              data = [...data.slice(0, at), ...data.slice(at + 1)];
+              break;
+            default:
+              data = data.map((c, i) => (i === at ? card(10 + random(90)) : c));
+          }
+          if (step % 9 === 0) data = [...data, ...cards.slice(0, random(80))];
+          same(layout(data, room3), fresh(data, columns), data.length);
+        }
+      }
+    });
+  });
 });
 
 describe('pagedLayout', () => {

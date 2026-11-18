@@ -93,7 +93,9 @@ const layout = useMemo(
 | --- | --- |
 | `columns` | How many columns share the room's width. |
 | `gap` | A number, or `{ x, y }`. Default `0`. |
-| `heightOf` | `(item, width, index) => height`: an item's height, given the width its column gives it. |
+| `heightOf` | `(item, width, index) => height`: an item's height, given the width its column gives it. It must depend only on its arguments. |
+
+The layout remembers its last result: when `data` changes, the items before the first one that differs (by reference) keep their places and `heightOf` isn't asked about them again. Adding at the end, or changing one item far down a long list, costs only what follows. So replace an item to change its height; changing it in place isn't noticed. A change of the container's width places everything again. Memoize the layout, as a new one starts with nothing remembered.
 
 ### `pagedLayout(options)`
 
@@ -133,7 +135,7 @@ Write `rectOf` and `indicesIn` yourself when you can work them out without a pas
 
 ## Example
 
-A runnable Expo app in [`example/`](example): switch between 3 columns, a list, one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it, holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
+A runnable Expo app in [`example/`](example): switch between 3 columns, a list, masonry, one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it, holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
 
 ```sh
 cd example
@@ -200,7 +202,7 @@ Drag works today through JavaScript (above). Using each platform's own drag-and-
 **Decisions to make before 1.0** (each would be a breaking change later)
 
 1. **A drag is a session of items, not a key.** *Done:* `onDragStart` and `onReorder` carry a `DragSession`, `{ origin, items: [{ key?, types, local? }] }`, because a drop may carry items that aren't in `data` (another app, another grid) and platform sessions already carry a list of items. The grid still lifts one internal item, so multi-item stacking can follow without a breaking change.
-2. **Layouts recompute from the first change.** Layouts already see the data and are queried lazily (`rectOf`, `indicesIn`), so only the visible region, the dragged item and the hover target are evaluated. `masonryLayout` still builds its rects in one pass over `data`; recomputing from the first changed index is to do.
+2. **Layouts recompute from the first change.** *Done:* layouts see the data and are queried lazily (`rectOf`, `indicesIn`), so only the visible region, the dragged item and the hover target are evaluated, and `masonryLayout` carries on from the first item that changed instead of placing every item again. Its `indicesIn` still scans every rect; a per-column search is possible if that shows up in a profile.
 
 **Scope**
 

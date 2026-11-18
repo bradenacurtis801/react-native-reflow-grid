@@ -1,13 +1,14 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ReduceMotion } from 'react-native-reanimated';
-import { gridLayout, pagedLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
+import { gridLayout, masonryLayout, pagedLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
 
-type Arrangement = 'grid' | 'list' | 'row' | 'rows' | 'fixed' | 'hpages' | 'vpages';
+type Arrangement = 'grid' | 'list' | 'masonry' | 'row' | 'rows' | 'fixed' | 'hpages' | 'vpages';
 
 const ARRANGEMENTS: { label: string; value: Arrangement }[] = [
   { label: '3 cols', value: 'grid' },
   { label: '1 col', value: 'list' },
+  { label: 'Masonry', value: 'masonry' },
   { label: '1 row', value: 'row' },
   { label: '2 rows', value: 'rows' },
   { label: 'Fixed', value: 'fixed' },
@@ -23,6 +24,9 @@ const REMOVE_HIT = 40;
 /** Room for the controls pinned over the grid. */
 const TOP = 150;
 const BOTTOM = 96;
+
+/** Height ÷ width of a masonry tile, by its number: a spread that repeats, so the columns come out uneven. */
+const MASONRY_RATIOS = [1.3, 0.8, 1, 1.55, 0.9, 1.2, 1.7, 0.7];
 
 interface Tile {
   id: number;
@@ -54,12 +58,15 @@ export default function App() {
   };
 
   // Memoized: a new layout function lays everything out again.
-  const layout = useMemo<ReflowLayout>(() => {
+  const layout = useMemo<ReflowLayout<Tile>>(() => {
     switch (arrangement) {
       case 'grid':
         return gridLayout({ flow: 'vertical', lines: 3, gap: GAP, card: { aspect: 0.75 } });
       case 'list':
         return gridLayout({ flow: 'vertical', lines: 1, gap: 8, card: { length: 56 } });
+      // Two columns of tiles of different heights, each under the shortest column so far.
+      case 'masonry':
+        return masonryLayout<Tile>({ columns: 2, gap: GAP, heightOf: (t, width) => width * MASONRY_RATIOS[t.id % MASONRY_RATIOS.length]! });
       case 'row':
         return gridLayout({ flow: 'horizontal', lines: 1, gap: GAP, card: { aspect: 0.75 } });
       case 'rows':
@@ -119,7 +126,7 @@ export default function App() {
 
       <View style={styles.top} pointerEvents="box-none">
         <Text style={styles.title}>Reflow Grid</Text>
-        <View style={styles.segmented}>
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.segmented} contentContainerStyle={styles.segmentedContent}>
           {ARRANGEMENTS.map((a) => (
             <Pressable
               key={a.value}
@@ -129,7 +136,7 @@ export default function App() {
               <Text style={styles.segmentLabel}>{a.label}</Text>
             </Pressable>
           ))}
-        </View>
+        </ScrollView>
       </View>
 
       <View style={styles.bottom} pointerEvents="box-none">
@@ -169,8 +176,9 @@ const styles = StyleSheet.create({
   grid: { flex: 1 },
   top: { position: 'absolute', top: 0, left: 0, right: 0, paddingTop: 64, paddingHorizontal: 16, gap: 12 },
   title: { color: '#fff', fontSize: 28, fontWeight: '800' },
-  segmented: { flexDirection: 'row', backgroundColor: '#1d2129', borderRadius: 12, padding: 3 },
-  segment: { flex: 1, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
+  segmented: { flexGrow: 0, backgroundColor: '#1d2129', borderRadius: 12 },
+  segmentedContent: { padding: 3 },
+  segment: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 9, alignItems: 'center' },
   segmentOn: { backgroundColor: '#3a4150' },
   segmentLabel: { color: '#fff', fontSize: 13, fontWeight: '600' },
   bottom: {
