@@ -1,4 +1,4 @@
-import { dotLook, edgeMargin, edgeScale, pagesPerPoint, scrubPage, slideStart } from '../pageIndicator';
+import { dotLook, edgeMargin, edgeScale, parseColor, readableOn, SCRUB_FAST, SCRUB_SLOW, scrubGain, scrubStep, slideStart, tapPage } from '../pageIndicator';
 
 describe('edgeScale', () => {
   it('is small at the end of the row, and full size from the third dot in', () => {
@@ -121,35 +121,122 @@ describe('dotLook', () => {
 });
 
 describe('scrubbing', () => {
-  // A row of 7 dots, each 16pt apart: 96pt from the first to the last.
-  it('has the row stand for all the pages, so a short drag goes a long way', () => {
-    expect(scrubPage(0, 96, 52, 7, 16)).toBe(51);
-    expect(scrubPage(0, 48, 52, 7, 16)).toBeGreaterThan(24);
-    expect(scrubPage(0, 48, 52, 7, 16)).toBeLessThan(28);
-    expect(pagesPerPoint(52, 7, 16)).toBeCloseTo(51 / 96, 10);
+  // Dots 16pt apart; a coarse drag across 400pt covers all the pages.
+  const gain = (speed: number, count = 52) => scrubGain(speed, count, 16, 400);
+
+  it('follows the dots when slow: a page for every dot width', () => {
+    expect(gain(0)).toBeCloseTo(1 / 16, 10);
+    expect(gain(SCRUB_SLOW)).toBeCloseTo(1 / 16, 10);
+    expect(scrubStep(10, 16, 200, 52, 16, 400)).toBeCloseTo(11, 10);
   });
 
-  it('moves a page for every dot it passes when the pages fit in the row', () => {
-    expect(scrubPage(0, 16, 7, 7, 16)).toBe(1);
-    expect(scrubPage(2, 32, 7, 7, 16)).toBe(4);
-    expect(scrubPage(3, 16, 4, 4, 16)).toBe(3);
-    // Fewer pages than dots: still a page a dot.
-    expect(scrubPage(0, 16, 3, 3, 16)).toBe(1);
+  it('goes further when fast, until a drag across the track covers all the pages', () => {
+    expect(gain(SCRUB_FAST)).toBeCloseTo(51 / 400, 10);
+    expect(gain(SCRUB_FAST * 5)).toBeCloseTo(51 / 400, 10);
+    // 400pt in one flick is 51 pages: the whole of it.
+    expect(scrubStep(0, 400, 100, 52, 16, 400)).toBeCloseTo(51, 6);
   });
 
-  it('goes back when dragged back, and from where it began, not from the start', () => {
-    expect(scrubPage(40, -96, 52, 7, 16)).toBe(0);
-    expect(scrubPage(20, -16, 52, 7, 16)).toBeLessThan(20);
-    expect(scrubPage(20, 0, 52, 7, 16)).toBe(20);
+  it('speeds up smoothly with the finger, never slows as it gets faster', () => {
+    let last = gain(0);
+    for (let speed = 0.05; speed <= 2; speed += 0.05) {
+      const now = gain(speed);
+      expect(now).toBeGreaterThanOrEqual(last - 1e-12);
+      last = now;
+    }
   });
 
-  it('stays among the pages', () => {
-    expect(scrubPage(50, 500, 52, 7, 16)).toBe(51);
-    expect(scrubPage(2, -500, 52, 7, 16)).toBe(0);
-    expect(scrubPage(0, 100, 1, 1, 16)).toBe(0);
+  it('is far gentler than a row-length map: a 16pt twitch is a page or so, not eight', () => {
+    // The old mapping gave 52 pages over a 96pt row: 8.5 pages for a 16pt movement.
+    expect(scrubStep(20, 16, 100, 52, 16, 400)).toBeLessThan(22);
   });
 
-  it('is steady: a drag that comes back to where it began lands where it began', () => {
-    for (const start of [0, 7, 25, 51]) expect(scrubPage(start, 0, 52, 7, 16)).toBe(start);
+  it('stays the same however fast when the pages fit the dots', () => {
+    expect(gain(0, 7)).toBe(gain(SCRUB_FAST, 7));
+    expect(gain(0, 20)).toBe(gain(SCRUB_FAST, 20));
+  });
+
+  it('goes back when dragged back, and stays among the pages', () => {
+    expect(scrubStep(10, -16, 200, 52, 16, 400)).toBeCloseTo(9, 10);
+    expect(scrubStep(1, -500, 50, 52, 16, 400)).toBe(0);
+    expect(scrubStep(50, 500, 50, 52, 16, 400)).toBe(51);
+    expect(scrubStep(0, 100, 50, 1, 16, 400)).toBe(0);
+  });
+
+  it('does not move when the finger does not', () => {
+    for (const start of [0, 7, 25, 51]) expect(scrubStep(start, 0, 16, 52, 16, 400)).toBe(start);
+  });
+
+  it('can stop on any page with a careful drag', () => {
+    // Fingers move a few points at a time, slowly: every page is reached in order.
+    let position = 20;
+    const seen = new Set<number>();
+    for (let i = 0; i < 60; i++) {
+      position = scrubStep(position, 2, 30, 52, 16, 400);
+      seen.add(Math.round(position));
+    }
+    for (let page = 21; page < 28; page++) expect(seen.has(page)).toBe(true);
+  });
+});
+
+describe('tapPage', () => {
+  // A row of dots 16pt apart, the row starting at page 0, then at page 10.
+  it('is the page of the dot touched', () => {
+    expect(tapPage(8, 0, 52, 16)).toBe(0);
+    expect(tapPage(24, 0, 52, 16)).toBe(1);
+    expect(tapPage(104, 0, 52, 16)).toBe(6);
+    expect(tapPage(8, 10, 52, 16)).toBe(10);
+    expect(tapPage(104, 10, 52, 16)).toBe(16);
+  });
+
+  it('takes a touch between two dots to the nearer, and follows a row that is sliding', () => {
+    // The first dot's slot runs to 16: a touch at 15 is still on it, and 17 is on the second.
+    expect(tapPage(15, 0, 52, 16)).toBe(0);
+    expect(tapPage(17, 0, 52, 16)).toBe(1);
+    // With the row half a dot along, page 2's slot is -8 to 8 and page 3's 8 to 24.
+    expect(tapPage(2, 2.5, 52, 16)).toBe(2);
+    expect(tapPage(14, 2.5, 52, 16)).toBe(3);
+    expect(tapPage(30, 2.5, 52, 16)).toBe(4);
+  });
+
+  it('stays among the pages, even for a touch on the padding around the dots', () => {
+    expect(tapPage(-30, 0, 52, 16)).toBe(0);
+    expect(tapPage(500, 40, 52, 16)).toBe(51);
+    expect(tapPage(5, 0, 1, 16)).toBe(0);
+  });
+});
+
+describe('readableOn', () => {
+  it('puts black on a light colour and white on a dark one, whatever the screen is set to', () => {
+    expect(readableOn('#fff')).toBe('#000');
+    expect(readableOn('#ffffff')).toBe('#000');
+    expect(readableOn('white')).toBe('#000');
+    expect(readableOn('#000')).toBe('#fff');
+    expect(readableOn('black')).toBe('#fff');
+    expect(readableOn('rgba(0,0,0,0.9)')).toBe('#fff');
+    expect(readableOn('rgb(250, 250, 250)')).toBe('#000');
+  });
+
+  it('judges by the light a colour gives, not by its numbers', () => {
+    // A strong yellow is light; a strong blue is dark; mid greys are the edge.
+    expect(readableOn('#ffd400')).toBe('#000');
+    expect(readableOn('#1a3cff')).toBe('#fff');
+    expect(readableOn('#7a1020')).toBe('#fff');
+    expect(readableOn('#3ccf8e')).toBe('#000');
+  });
+
+  it('understands hex in its short and long forms, with or without alpha, and rgb()', () => {
+    expect(parseColor('#abc')).toEqual([170, 187, 204]);
+    expect(parseColor('#aabbcc')).toEqual([170, 187, 204]);
+    expect(parseColor('#aabbccdd')).toEqual([170, 187, 204]);
+    expect(parseColor('#abcd')).toEqual([170, 187, 204]);
+    expect(parseColor('rgb(1, 2, 3)')).toEqual([1, 2, 3]);
+    expect(parseColor('rgba(10 20 30 / 0.5)')).toEqual([10, 20, 30]);
+  });
+
+  it('has no answer for a colour it does not understand, so a default can step in', () => {
+    expect(readableOn('hsl(10, 50%, 50%)')).toBeUndefined();
+    expect(readableOn('PlatformColor')).toBeUndefined();
+    expect(readableOn('')).toBeUndefined();
   });
 });

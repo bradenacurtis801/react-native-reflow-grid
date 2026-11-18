@@ -606,6 +606,22 @@ export function ReflowGrid<T>({
     track(to);
     engine.haptic('scrub');
   };
+  /** Tapping a dot: to its page, with the scroll's own animation when it's next door, at once when it's further. */
+  const jumpTo = (page: number) => {
+    const pg = placed?.pages;
+    if (!pg) return;
+    const horizontal = pg.direction === 'horizontal';
+    const target = Math.min(Math.max(page, 0), pg.count - 1);
+    const here = pageOf(pg, horizontal ? offset.current.x : offset.current.y);
+    if (target === here) return;
+    const along = target * pg.stride;
+    const to = horizontal ? { x: along, y: offset.current.y } : { x: offset.current.x, y: along };
+    const next = Math.abs(target - here) <= 1;
+    scrollRef.current?.scrollTo({ ...to, animated: next });
+    // An animated scroll reports its own way there; one that is at once is told.
+    if (!next) track(to);
+    engine.haptic('scrub');
+  };
 
   // Two axes. On iOS one scroll view holds both: its content is wider and taller than its frame, so one drag moves it diagonally.
   // Android has no two-axis scroll view, so there a horizontal one nests inside the vertical (a drag then belongs to one axis).
@@ -684,7 +700,9 @@ export function ReflowGrid<T>({
             progress={pageProgress}
             horizontal={dots.direction === 'horizontal'}
             options={dotOptions}
+            track={(dots.direction === 'horizontal' ? viewport?.width : viewport?.height) ?? 0}
             onScrub={scrubTo}
+            onJump={jumpTo}
           />
         </View>
       )}
