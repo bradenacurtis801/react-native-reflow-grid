@@ -14,7 +14,7 @@ Built on `react-native-reanimated` v4 and `react-native-worklets`. Pure TypeScri
 
 | Columns | Rows |
 | --- | --- |
-| ![Columns layout](demo/col-layout.gif) | ![Rows layout](demo/row-layout.gif) |
+| ![Columns layout](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/col-layout.gif) | ![Rows layout](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/row-layout.gif) |
 
 ## Install
 
@@ -41,7 +41,7 @@ const layout = useMemo(() => gridLayout({ flow: 'vertical', lines: 3, gap: 12 })
 />
 ```
 
-`renderItem` draws; it takes no touches. Pressable parts are declared in `touchRegions` (in the item's own space), and the grid fires `onPress` when a finger that went down inside one lifts without having moved.
+`renderItem` draws; it takes no touches. It's given `{ index, size, dragging }`; `dragging` is true for an item being dragged (its slot also dims). Pressable parts are declared in `touchRegions` (in the item's own space), and the grid fires `onPress` when a finger that went down inside one lifts without having moved.
 
 Memoize `layout` and `touchRegions`: a new function lays everything out again.
 
@@ -64,7 +64,9 @@ Memoize `layout` and `touchRegions`: a new function lays everything out again.
 | `axis` | `'vertical'` (default), `'horizontal'`, or `'both'`. |
 | `startInset`, `endInset` | Space the scrolled content must clear at the start/end of the scroll axis (e.g. a header and a tab bar). Content scrolls beneath and rests clear. Default `0`. |
 | `crossStartInset`, `crossEndInset` | For horizontal grids: space rows clear at the top and bottom. |
-| `reduceMotion` | `ReduceMotion.System` (default) jumps animations to their end when the device's reduce-motion setting is on; `ReduceMotion.Never` always animates. |
+| `reduceMotion` | `ReduceMotion.System` (default) jumps animations to their end when the device's reduce-motion setting is on, and so does a page turn during a drag; `ReduceMotion.Never` always animates (on web the grid animates the page turn itself, since the browser's own smooth scrolling is switched off by that setting). |
+| `onReorder` | Turns on drag to reorder (**web only, for now**). Called on a drop that changed the order with `{ keys, moved, from, to }`: the new order of the keys. Put `data` in that order; the grid shows the new order meanwhile, so a `data` that follows a moment later doesn't flicker. |
+| `canDrag` | `(item, index) => boolean`: whether an item can be dragged. Default: all can. |
 | `onMounted` | Called with how many cells are mounted after each change. |
 
 ### `masonryLayout(options)`
@@ -86,6 +88,23 @@ const layout = useMemo(
 | `gap` | A number, or `{ x, y }`. Default `0`. |
 | `heightOf` | `(item, width, index) => height`: an item's height, given the width its column gives it. |
 
+### `pagedLayout(options)`
+
+Pages of `columns × rows` cells, each as big as the container, scrolled one page at a time (the grid snaps to them).
+
+```ts
+const layout = useMemo(() => pagedLayout({ direction: 'horizontal', columns: 3, rows: 4, gap: 12 }), []);
+// <ReflowGrid axis="horizontal" layout={layout} ... />
+```
+
+| Option | Description |
+| --- | --- |
+| `direction` | `'horizontal'`: pages side by side (use `axis="horizontal"`). `'vertical'`: one under another. |
+| `columns`, `rows` | Cells in a page; they share the page equally. |
+| `gap` | A number, or `{ x, y }`. Default `0`. |
+
+Use no inset along the way it pages. See the roadmap for how dragging behaves between pages.
+
 ### Custom layouts
 
 A layout is a function from the items and the container's size to a result that answers two questions, so only what's needed is worked out: where item `i` goes (`rectOf`), and which items meet a region of the content (`indicesIn`, called with what's on screen plus a buffer). `gridLayout` answers both from the index alone, with nothing built per item.
@@ -105,7 +124,7 @@ Write `rectOf` and `indicesIn` yourself when you can work them out without a pas
 
 ## Example
 
-A runnable Expo app in [`example/`](example): switch between 3 columns, a list, one or two rows, and a fixed-size two-axis grid; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
+A runnable Expo app in [`example/`](example): switch between 3 columns, a list, one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it (web), holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
 
 ```sh
 cd example
@@ -126,15 +145,30 @@ Drag and drop will use each platform's own drag-and-drop API (UIKit's drag and d
 - **Drivers.** A driver turns platform drag input into `{ phase, location, session }`; the core owns everything visual. Native drivers ship as an optional add-on, iOS first, then web, then Android. A JS-gesture driver may follow as a fallback for in-grid reorder where no native driver exists.
 - **Native delegates can't wait for JS.** The platform's drop callbacks must answer synchronously, so the grid pushes declarative data to native ahead of time (slot rects, payload descriptors, accepted types, a drop-intent policy) and receives asynchronous notifications back (`onDragHover`, `onDrop`, `onReorder`). Until `data` catches up after a drop, the grid keeps its own pending order.
 
+**Joining** (dropping an item onto another to combine them, as into a folder) is opt-in. It's a second drop intent, `{ type: 'into', key }`, beside `{ type: 'insert', index }`.
+
+- **Off, the default:** the whole of every slot means insert, so the others reflow as soon as the finger enters a slot (the hysteresis margin only stops flicker on the line between two slots).
+- **On:** a slot that accepts what's being dragged has a center zone as well as an edge band. The edge band inserts and reflows; in the center nothing reflows, and after a dwell the slot highlights and a drop reports `into`. A slot that doesn't accept it is a plain insert slot.
+- **Who can join whom is per item, and declarative.** Each item has a descriptor, `{ kind, accepts }`, from a `joinPolicy(item)` prop; a dragged item can join a target when its `kind` is in the target's `accepts`. For several items dragged together, all must be accepted. It's data, not a callback, because a native drop delegate has to answer synchronously, so native evaluates it itself from the descriptors of the visible slots and the dragged items.
+- One zone function serves both modes; the only difference is whether a slot has a center zone. The dwell time is one setting for the grid to start with.
+
+**Auto-scroll.** Dragging near an edge of what's on screen scrolls that way. The edges are those of the visible part, inside `startInset` and `endInset`, and scrolling continues over a pinned header. It speeds up with how near the edge the pointer is, and builds up the longer it's held there (from 30% of its speed to all of it over about a second). The target is worked out again as the content moves under a still pointer. *Done on web.*
+
+**Paging.** `pagedLayout({ direction, columns, rows, gap })` lays items out in pages of `columns × rows` cells, each a container's worth, filled a row at a time; every slot, and which are in a region, is worked out from the index. The grid snaps its scrolling to the pages: natively with `pagingEnabled`, on web by going to the nearest page once scrolling settles. Give it no inset along the way it pages (a vertical one's header, say), or the snap points won't line up; the cross insets of a horizontal one are fine. For a drag:
+
+- Held at an edge for a moment (0.7 s), it turns the page, then must be held again for the next; it doesn't scroll continuously.
+- A target is only looked for among the slots of the page the pointer is on, and a pointer past that page's last item takes its end.
+- Pages are dense: an item moves to an index, and the pages fill in order, so a new page appears when the count passes a page's worth. Dragging can't make a page with a gap in it, or an empty one — that would take a data model of explicit pages. Dropping on the page after the last puts the item at the end.
+
 **Decisions to make before 1.0** (each would be a breaking change later)
 
-1. **Layouts see the data and are queried lazily.** *Done:* `layout(data, container)` returns `{ size, rectOf(i), indicesIn(region) }`, so layouts can depend on item sizes (`masonryLayout`), and only the visible region, the dragged item and the hover target need evaluating. `gridLayout` answers analytically; `masonryLayout` builds its rects in one pass over `data`, so recomputing from the first changed index is still to do. *To do with drag:* a preview is the layout of the reordered data, hit-tested against the layout without the dragged item (with hysteresis) so it can't oscillate under the finger, and native drivers receive only the rects they need.
+1. **Layouts see the data and are queried lazily.** *Done:* `layout(data, container)` returns `{ size, rectOf(i), indicesIn(region) }`, so layouts can depend on item sizes (`masonryLayout`), and only the visible region, the dragged item and the hover target need evaluating. `gridLayout` answers analytically; `masonryLayout` builds its rects in one pass over `data`, so recomputing from the first changed index is still to do. *Drag:* a preview is the layout of the reordered data, while the finger is hit-tested against the layout the drag began with — it doesn't move as the others make room, so the target can't flip under a resting finger — with a margin (hysteresis) before it moves to the next slot. The logic is in `src/drag.ts`, pure TypeScript and tested; the grid drives it from the browser's drag and drop on web. Native drivers will receive only the rects they need.
 2. **A drag is a session of items, not a key.** `{ origin: 'internal' | 'external', items: [{ key?, types, local? }] }`: a drop may carry items that aren't in `data` (another app, another grid), and platform sessions already carry a list of items. v1 behavior caps a drag at one internal item, so multi-item stacking can follow without a breaking change.
 
 **Scope**
 
 - **v1:** reorder inside one grid on iOS through the platform drag session, with typed payloads. Drag lifecycle callbacks and a `dragging` flag in `renderItem`; a configurable long-press and drag-handle regions; auto-scroll near the edges; per-item opt-out (like `canMoveItemAt`).
-- **v1.x:** an `{ type: 'into', key }` drop intent with a dwell time (folders, combine), multi-item sessions, an external drop-zone API (trash, eject), web driver.
+- **v1.x:** joining (below), multi-item sessions, an external drop-zone API (trash, eject).
 - **Later:** Android driver, cross-grid and cross-app polish, paging.
 
 ## License

@@ -1,17 +1,18 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ReduceMotion } from 'react-native-reanimated';
-import { gridLayout, layoutFromRects, ReflowGrid, type ReflowLayout, type Size } from 'react-native-reflow-grid';
+import { gridLayout, pagedLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
 
-type Arrangement = 'auto' | 'grid' | 'list' | 'row' | 'rows' | 'fixed';
+type Arrangement = 'grid' | 'list' | 'row' | 'rows' | 'fixed' | 'hpages' | 'vpages';
 
 const ARRANGEMENTS: { label: string; value: Arrangement }[] = [
-  { label: 'Auto', value: 'auto' },
   { label: '3 cols', value: 'grid' },
   { label: '1 col', value: 'list' },
   { label: '1 row', value: 'row' },
   { label: '2 rows', value: 'rows' },
   { label: 'Fixed', value: 'fixed' },
+  { label: 'H pages', value: 'hpages' },
+  { label: 'V pages', value: 'vpages' },
 ];
 
 const GAP = 12;
@@ -22,38 +23,6 @@ const REMOVE_HIT = 40;
 /** Room for the controls pinned over the grid. */
 const TOP = 150;
 const BOTTOM = 96;
-/** Card width ÷ height. */
-const ASPECT = 0.75;
-
-/**
- * Every card on screen at once: the column count whose cards come out biggest
- * while all the rows still fit the room (less what's pinned over it), centered.
- */
-const fitLayout: ReflowLayout = (data, room: Size) => {
-  const count = data.length;
-  // A margin each side, so a scrollbar's width can't push the content wider than what's shown.
-  const width = Math.max(room.width - 2 * GAP, 0);
-  const height = Math.max(room.height - TOP - BOTTOM, 0);
-  let best = { columns: 1, width: 0, height: 0 };
-  for (let columns = 1; columns <= Math.max(count, 1); columns++) {
-    const rows = Math.ceil(count / columns);
-    const byWidth = (width - (columns - 1) * GAP) / columns;
-    const byHeight = ((height - (rows - 1) * GAP) / rows) * ASPECT;
-    const card = Math.max(Math.min(byWidth, byHeight), 0);
-    if (card > best.width) best = { columns, width: card, height: card / ASPECT };
-  }
-  const { columns, width: cardWidth, height: cardHeight } = best;
-  const used = Math.min(count, columns) * cardWidth + (Math.min(count, columns) - 1) * GAP;
-  const left = Math.max((room.width - 2 * GAP - used) / 2, 0) + GAP;
-  const rects = Array.from({ length: count }, (_, i) => ({
-    x: left + (i % columns) * (cardWidth + GAP),
-    y: Math.floor(i / columns) * (cardHeight + GAP),
-    width: cardWidth,
-    height: cardHeight,
-  }));
-  const rows = Math.ceil(count / columns);
-  return layoutFromRects(rects, { width, height: count === 0 ? 0 : rows * cardHeight + (rows - 1) * GAP });
-};
 
 interface Tile {
   id: number;
@@ -62,12 +31,19 @@ interface Tile {
 const tiles = (from: number, count: number): Tile[] => Array.from({ length: count }, (_, i) => ({ id: from + i }));
 
 export default function App() {
-  const [arrangement, setArrangement] = useState<Arrangement>('auto');
+  const [arrangement, setArrangement] = useState<Arrangement>('grid');
   const [items, setItems] = useState(() => tiles(1, COUNT));
   const [mounted, setMounted] = useState(0);
   const next = useRef(COUNT + 1);
 
   const remove = useCallback((id: number) => setItems((all) => all.filter((t) => t.id !== id)), []);
+  // The grid reports the new order of the keys; the tiles follow it.
+  const reorder = useCallback(({ keys }: { keys: readonly string[] }) => {
+    setItems((all) => {
+      const byId = new Map(all.map((t) => [String(t.id), t]));
+      return keys.flatMap((k) => byId.get(k) ?? []);
+    });
+  }, []);
   const add = (count: number) => {
     setItems((all) => [...all, ...tiles(next.current, count)]);
     next.current += count;
@@ -80,8 +56,6 @@ export default function App() {
   // Memoized: a new layout function lays everything out again.
   const layout = useMemo<ReflowLayout>(() => {
     switch (arrangement) {
-      case 'auto':
-        return fitLayout;
       case 'grid':
         return gridLayout({ flow: 'vertical', lines: 3, gap: GAP, card: { aspect: 0.75 } });
       case 'list':
@@ -98,6 +72,11 @@ export default function App() {
       // Fixed on both axes: five 300 × 240 columns are wider than the screen, so the grid scrolls both ways.
       case 'fixed':
         return gridLayout({ flow: 'vertical', lines: 5, gap: GAP, card: { width: 300, height: 240 } });
+      // Pages of 3 × 4, one room each: the grid snaps to them, and a drag held at an edge turns the page.
+      case 'hpages':
+        return pagedLayout({ direction: 'horizontal', columns: 3, rows: 4, gap: GAP });
+      case 'vpages':
+        return pagedLayout({ direction: 'vertical', columns: 3, rows: 4, gap: GAP });
     }
   }, [arrangement]);
 
@@ -113,22 +92,25 @@ export default function App() {
     [remove],
   );
 
-  const horizontal = arrangement === 'row' || arrangement === 'rows';
+  const horizontal = arrangement === 'row' || arrangement === 'rows' || arrangement === 'hpages';
+  // A page is the whole room: no inset, so the grid sits between the controls by margin instead.
+  const paged = arrangement === 'hpages' || arrangement === 'vpages';
 
   return (
     <View style={styles.root}>
       <ReflowGrid
-        style={styles.grid}
+        style={[styles.grid, paged && { marginTop: TOP, marginBottom: BOTTOM }]}
         axis={horizontal ? 'horizontal' : arrangement === 'fixed' ? 'both' : 'vertical'}
         // The grid is full-bleed: it scrolls under the pinned controls and rests clear of them.
-        startInset={TOP}
-        endInset={BOTTOM}
-        crossStartInset={TOP}
-        crossEndInset={BOTTOM}
+        startInset={paged ? 0 : TOP}
+        endInset={paged ? 0 : BOTTOM}
+        crossStartInset={paged ? 0 : TOP}
+        crossEndInset={paged ? 0 : BOTTOM}
         data={items}
         keyExtractor={(t) => String(t.id)}
         layout={layout}
         onMounted={setMounted}
+        onReorder={reorder}
         reduceMotion={ReduceMotion.Never}
         renderItem={(t) => <TileView tile={t} />}
         touchRegions={touchRegions}

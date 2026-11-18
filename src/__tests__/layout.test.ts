@@ -1,4 +1,4 @@
-import { gridLayout, intersects, layoutFromRects, masonryLayout, type Rect, type ReflowLayout, type ReflowResult, type Region } from '../layout';
+import { gridLayout, intersects, layoutFromRects, masonryLayout, pagedLayout, type Rect, type ReflowLayout, type ReflowResult, type Region } from '../layout';
 
 /** `n` items for a layout to place (a grid ignores what they are). */
 const items = (n: number) => Array.from({ length: n }, (_, i) => i);
@@ -228,5 +228,76 @@ describe('masonryLayout', () => {
 
   it('refuses a column count that is not a whole number of 1 or more', () => {
     expect(() => masonryLayout({ columns: 0, heightOf: () => 1 })).toThrow();
+  });
+});
+
+describe('pagedLayout', () => {
+  // 2 columns × 3 rows a page, in a 200 × 300 room with 10pt gaps: a card is 95 × 93.33.
+  const room = { width: 200, height: 300 };
+  const horizontal = pagedLayout({ direction: 'horizontal', columns: 2, rows: 3, gap: 10 });
+  const vertical = pagedLayout({ direction: 'vertical', columns: 2, rows: 3, gap: 10 });
+  const CARD_H = (300 - 20) / 3;
+
+  it('fills a page a row at a time, then starts the next one a room further along', () => {
+    const rects = rectsOf(horizontal(items(8), room), 8);
+    expect(rects[0]).toEqual({ x: 0, y: 0, width: 95, height: expect.closeTo(CARD_H, 5) });
+    expect(rects[1]!.x).toBe(105);
+    expect(rects[2]!.y).toBeCloseTo(CARD_H + 10, 5);
+    // The seventh item starts the second page.
+    expect(rects[6]).toMatchObject({ x: 200, y: 0 });
+    expect(rects[7]).toMatchObject({ x: 305, y: 0 });
+  });
+
+  it('puts the pages one under another when vertical', () => {
+    const rects = rectsOf(vertical(items(8), room), 8);
+    expect(rects[6]).toMatchObject({ x: 0, y: 300 });
+    expect(rects[7]).toMatchObject({ x: 105, y: 300 });
+  });
+
+  it('sizes the content to whole pages, and says how they are laid out', () => {
+    const h = horizontal(items(8), room);
+    expect(h.size).toEqual({ width: 400, height: 300 });
+    expect(h.pages).toEqual({ count: 2, stride: 200, direction: 'horizontal', perPage: 6 });
+    const v = vertical(items(13), room);
+    expect(v.size).toEqual({ width: 200, height: 900 });
+    expect(v.pages).toMatchObject({ count: 3, stride: 300, direction: 'vertical' });
+  });
+
+  it('is empty with no items', () => {
+    const result = horizontal([], room);
+    expect(result.size).toEqual({ width: 0, height: 0 });
+    expect(result.indicesIn({ x0: -1e9, x1: 1e9, y0: -1e9, y1: 1e9 })).toEqual([]);
+  });
+
+  it('can give the cards an aspect ratio or a fixed size', () => {
+    const aspect = pagedLayout({ direction: 'horizontal', columns: 2, rows: 2, card: { aspect: 0.5 } })(items(1), room);
+    expect(aspect.rectOf(0)).toMatchObject({ width: 100, height: 200 });
+    const fixed = pagedLayout({ direction: 'vertical', columns: 3, rows: 2, gap: 4, card: { width: 40, height: 30 } })(items(4), room);
+    expect(rectsOf(fixed, 4).map((r) => [r.x, r.y, r.width, r.height])).toEqual([
+      [0, 0, 40, 30],
+      [44, 0, 40, 30],
+      [88, 0, 40, 30],
+      [0, 34, 40, 30],
+    ]);
+  });
+
+  it('finds the same items in a region as a scan does', () => {
+    const regions: Region[] = Array.from({ length: 80 }, (_, k) => {
+      const x0 = ((k * 53) % 900) - 100;
+      const y0 = ((k * 71) % 700) - 80;
+      return { x0, x1: x0 + 15 + ((k * 37) % 400), y0, y1: y0 + 15 + ((k * 23) % 500) };
+    });
+    for (const layout of [horizontal, vertical]) {
+      for (const count of [0, 1, 6, 7, 20, 50]) {
+        const result = layout(items(count), room);
+        for (const region of regions) expect(result.indicesIn(region)).toEqual(scan(result, count, region));
+      }
+    }
+  });
+
+  it('refuses columns or rows that are not whole numbers of 1 or more, and a card with no size', () => {
+    expect(() => pagedLayout({ direction: 'horizontal', columns: 0, rows: 2 })).toThrow();
+    expect(() => pagedLayout({ direction: 'horizontal', columns: 2, rows: 1.5 })).toThrow();
+    expect(() => pagedLayout({ direction: 'horizontal', columns: 2, rows: 2, card: { width: 0, height: 5 } })).toThrow();
   });
 });

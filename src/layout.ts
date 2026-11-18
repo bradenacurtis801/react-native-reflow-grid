@@ -21,6 +21,16 @@ export function intersects(r: Rect, region: Region): boolean {
   return r.x < region.x1 && r.x + r.width > region.x0 && r.y < region.y1 && r.y + r.height > region.y0;
 }
 
+/** A layout made of pages, one after another along the scroll axis, each one `stride` long. */
+export interface PageInfo {
+  count: number;
+  /** How far apart the pages start: the room's size along the scroll axis. */
+  stride: number;
+  direction: 'horizontal' | 'vertical';
+  /** How many items a page holds. */
+  perPage: number;
+}
+
 /**
  * Where a layout puts its items. It's asked for only what's needed — the
  * items on screen, one item's slot — so a layout need not build a rect for
@@ -30,6 +40,8 @@ export function intersects(r: Rect, region: Region): boolean {
 export interface ReflowResult {
   /** What the items take up together: what the content view is sized to. */
   size: Size;
+  /** Set by a paged layout: the grid snaps to whole pages, and a drag turns them. */
+  pages?: PageInfo;
   /** Where item `index` goes. */
   rectOf(index: number): Rect;
   /** The items whose rects meet `region`, in ascending order. */
@@ -207,5 +219,96 @@ export function masonryLayout<T>({ columns, gap: gapOption, heightOf }: MasonryL
       width: empty ? 0 : columns * width + (columns - 1) * gap.x,
       height: empty ? 0 : Math.max(...next) - gap.y,
     });
+  };
+}
+
+export interface PagedLayoutOptions {
+  /** The way pages follow one another, which is the way the grid scrolls: `axis` must match. */
+  direction: 'horizontal' | 'vertical';
+  /** Items across a page and down it: a page holds `columns × rows`, filled a row at a time. */
+  columns: number;
+  rows: number;
+  /** Between items: one number for both axes, or each. @default 0 */
+  gap?: number | { x: number; y: number };
+  /**
+   * An item's size. By default each one takes an equal share of the page.
+   * `{ aspect }` — width ÷ height, the width being a column's share of the page.
+   * `{ width, height }` — fixed, in points. Either way a page is as big as the room,
+   * and the items sit at its start.
+   */
+  card?: { aspect: number } | { width: number; height: number };
+}
+
+/**
+ * Pages of `columns × rows` items, each page as big as the room, one after
+ * another along `direction`. The grid snaps to whole pages. Like `gridLayout`,
+ * it works every slot, and which ones are in a region, out from the index.
+ * Give the grid no start or end inset along its scroll axis: a page is the room.
+ */
+export function pagedLayout(options: PagedLayoutOptions): ReflowLayout {
+  const { direction, columns, rows, card } = options;
+  if (!Number.isInteger(columns) || columns < 1 || !Number.isInteger(rows) || rows < 1) {
+    throw new Error(`pagedLayout: columns and rows must be whole numbers of 1 or more, got ${columns} × ${rows}`);
+  }
+  if (card && 'width' in card && !(card.width > 0 && card.height > 0)) {
+    throw new Error(`pagedLayout: a card's width and height must be above 0, got ${card.width} × ${card.height}`);
+  }
+  const gap = typeof options.gap === 'number' ? { x: options.gap, y: options.gap } : (options.gap ?? { x: 0, y: 0 });
+  const horizontal = direction === 'horizontal';
+  const perPage = columns * rows;
+
+  return (data, room) => {
+    const count = data.length;
+    const stride = horizontal ? room.width : room.height;
+    let item: Size;
+    if (card && 'width' in card) {
+      item = { width: card.width, height: card.height };
+    } else {
+      const width = Math.max((room.width - (columns - 1) * gap.x) / columns, 0);
+      item = card ? { width, height: width / card.aspect } : { width, height: Math.max((room.height - (rows - 1) * gap.y) / rows, 0) };
+    }
+    const pitch = { x: item.width + gap.x, y: item.height + gap.y };
+    const pageCount = Math.ceil(count / perPage);
+
+    const rectOf = (i: number): Rect => {
+      const page = Math.floor(i / perPage);
+      const k = i % perPage;
+      return {
+        x: (horizontal ? page * stride : 0) + (k % columns) * pitch.x,
+        y: (horizontal ? 0 : page * stride) + Math.floor(k / columns) * pitch.y,
+        ...item,
+      };
+    };
+    const size = count === 0 ? { width: 0, height: 0 } : horizontal ? { width: pageCount * stride, height: room.height } : { width: room.width, height: pageCount * stride };
+
+    return {
+      size,
+      pages: { count: pageCount, stride, direction, perPage },
+      rectOf,
+      indicesIn: (region) => {
+        const out: number[] = [];
+        if (count === 0) return out;
+        if (!(pitch.x > 0 && pitch.y > 0 && stride > 0)) {
+          for (let i = 0; i < count; i++) if (intersects(rectOf(i), region)) out.push(i);
+          return out;
+        }
+        const lo = horizontal ? region.x0 : region.y0;
+        const hi = horizontal ? region.x1 : region.y1;
+        const last = Math.min(Math.ceil(hi / stride) - 1, pageCount - 1);
+        for (let page = Math.max(Math.floor(lo / stride), 0); page <= last; page++) {
+          // The region in this page's own coordinates.
+          const shift = page * stride;
+          const [c0, c1] = span(region.x0 - (horizontal ? shift : 0), region.x1 - (horizontal ? shift : 0), item.width, pitch.x, columns);
+          const [r0, r1] = span(region.y0 - (horizontal ? 0 : shift), region.y1 - (horizontal ? 0 : shift), item.height, pitch.y, rows);
+          for (let row = r0; row <= r1; row++) {
+            for (let column = c0; column <= c1; column++) {
+              const i = page * perPage + row * columns + column;
+              if (i < count) out.push(i);
+            }
+          }
+        }
+        return out;
+      },
+    };
   };
 }
