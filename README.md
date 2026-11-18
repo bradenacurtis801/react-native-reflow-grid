@@ -22,6 +22,8 @@ Built on `react-native-reanimated` v4 and `react-native-worklets`. Pure TypeScri
 npm install react-native-reflow-grid react-native-reanimated react-native-worklets
 ```
 
+For haptic feedback while dragging, also have [`expo-haptics`](https://docs.expo.dev/versions/latest/sdk/haptics/) (`npx expo install expo-haptics`). It's optional: the grid uses it when it's there, and an app without it bundles and runs as before.
+
 ## Usage
 
 ```tsx
@@ -68,7 +70,8 @@ Memoize `layout` and `touchRegions`: a new function lays everything out again.
 | `onReorder` | Turns on drag to reorder. On web a mouse drags through the browser's own drag and drop; a finger, on any platform, holds on an item for a moment to lift it, and the item then follows the finger *(touch is new, and so far only tried in a browser, not on a device)*. Called on a drop that changed the order with `{ keys, moved, from, to }`: the new order of the keys. Put `data` in that order; the grid shows the new order meanwhile, so a `data` that follows a moment later doesn't flicker. |
 | `canDrag` | `(item, index) => boolean`: whether an item can be dragged. Default: all can. |
 | `pageIndicator` | For a paged layout: dots, one per page and lit for the one on screen, shown where the scroll indicator along the pages would be (the bottom edge for pages side by side, the right edge for pages one under another), in place of it. `{ color, activeColor, size, spacing, maxDots, scrub }` style them; the colours default to light dots on a dark screen and dark on a light one. The dots follow the swipe: as you drag towards the next page the dot you're leaving shrinks and dims while the next one grows and brightens, in step with your finger. With more pages than `maxDots` (7) the row slides along with the swipe when the page on screen reaches its end, the dots at its ends shrinking to say there are more. **Drag along the dots to scrub** through the pages, as you drag a scroll bar: movement is relative to where you grabbed, and the row's length stands for all the pages, so a short drag goes a long way (with few pages, one dot's width is one page); a label (`27 / 52`) says where you are. The dots sit on a bigger touch area than they show, and touches there don't reach the grid beneath. `scrub: false` makes them display only. `false`: no dots, and the scroll indicator stays. Default `true`. |
-| `onDragStart` | Called with the lifted item's key when a finger lifts it: the place for a haptic tap. |
+| `haptics` | Feedback for the grid's moments. **On by default**: with `expo-haptics` installed the grid taps when an item is lifted (medium), taps lightly as it moves to another slot and on a drop that changed the order, and ticks (the lightest feedback) when a page turns during a drag or you scrub the page dots. Without `expo-haptics`, and on web, it does nothing. `false` turns it off; a function `(event) => void` gets each moment (`'lift' \| 'move' \| 'drop' \| 'pageTurn' \| 'scrub'`) to give feedback with whatever you use. The frequent ones (`move`, `scrub`) are limited to one every 60 / 50 ms. |
+| `onDragStart` | Called with the lifted item's key when an item is lifted. |
 | `onMounted` | Called with how many cells are mounted after each change. |
 
 ### `masonryLayout(options)`

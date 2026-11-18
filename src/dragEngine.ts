@@ -1,4 +1,5 @@
 import { beginDrag, edgeVelocity, endDrag, slotAt, updateDrag, type DragResult, type DragSession, type DragState, type Point } from './drag';
+import { HAPTIC_GAPS, type HapticEvent } from './haptics';
 import type { ReflowResult, Size } from './layout';
 
 /** A scroll position, in the scroll view's terms (what `contentOffset` reports). */
@@ -76,6 +77,8 @@ export interface DragView<T> {
   onDragStart?(keys: readonly string[]): void;
   /** The finger with this id has lifted an item: the press it began is over. */
   onLift?(id: string): void;
+  /** A moment for feedback (see `HapticEvent`); absent when there is none to give. */
+  haptic?(event: HapticEvent): void;
 }
 
 /** What the grid draws from: a drag in progress, and what goes with it. */
@@ -127,6 +130,7 @@ export class DragEngine<T> {
   private scroll: ScrollState = { time: 0, pos: { x: 0, y: 0 } };
   private press?: Press;
   private holdTimer?: unknown;
+  private lastHaptic: Partial<Record<HapticEvent, number>> = {};
 
   constructor(private host: DragHost) {}
 
@@ -162,6 +166,17 @@ export class DragEngine<T> {
   /** `data` in that order. */
   itemsFor(data: readonly T[], order: readonly string[] | undefined): readonly T[] {
     return order ? order.map((k) => this.byKey.get(k) as T) : data;
+  }
+
+  /** Gives feedback for a moment, unless it's one that comes often and did a moment ago (`HAPTIC_GAPS`). */
+  haptic(event: HapticEvent) {
+    const gap = HAPTIC_GAPS[event];
+    if (gap) {
+      const now = this.host.now();
+      if (now - (this.lastHaptic[event] ?? -Infinity) < gap) return;
+      this.lastHaptic[event] = now;
+    }
+    this.view.haptic?.(event);
   }
 
   dispose() {
@@ -283,6 +298,7 @@ export class DragEngine<T> {
     const rect = placed.rectOf(index);
     this.view.setFinger(point, { x: point.x - rect.x, y: point.y - rect.y });
     this.set({ drag: state, floating: kind === 'touch' });
+    this.haptic('lift');
     return state;
   }
 
@@ -311,7 +327,10 @@ export class DragEngine<T> {
     // The content may have scrolled under a still finger.
     this.view.setFinger(point);
     const next = updateDrag(state, base, point);
-    if (next !== state) this.set({ drag: next });
+    if (next !== state) {
+      this.set({ drag: next });
+      this.haptic('move');
+    }
   }
 
   private finish(cancelled: boolean) {
@@ -339,6 +358,7 @@ export class DragEngine<T> {
       this.set({ drag: undefined, floating: false, held: { keys: result.keys, data: this.view.data } });
       this.host.clearTimeout(this.holdTimer);
       this.holdTimer = this.host.setTimeout(() => this.set({ held: undefined }), HOLD_MS);
+      this.haptic('drop');
       this.view.onReorder?.(result);
     } else {
       this.set({ drag: undefined, floating: false });
@@ -419,6 +439,7 @@ export class DragEngine<T> {
         const to = Math.min(Math.max(Math.round(from / pages.stride) + dir, 0), pages.count - 1) * pages.stride;
         scroll.dwell = { dir, since: time };
         if (to !== from) {
+          this.haptic('pageTurn');
           if (web && !instant) {
             scroll.turn = { from, to, start: time, horizontal };
             this.set({ turning: true });

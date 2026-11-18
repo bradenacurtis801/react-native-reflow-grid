@@ -25,6 +25,8 @@ import { runOnJS } from 'react-native-worklets';
 import type { DragResult, Point } from './drag';
 import { SLOP, type Offset } from './dragEngine';
 import { intersects, type Rect, type ReflowLayout, type Region, type Size } from './layout';
+import { resolveHaptics, expoHaptics, type HapticsOption } from './haptics';
+import { loadExpoHaptics } from './loadExpoHaptics';
 import { PageDots } from './PageDots';
 import { DOTS_HIT, type PageIndicatorOptions } from './pageIndicator';
 import { useDragReorder } from './useDragReorder';
@@ -141,6 +143,7 @@ export function ReflowGrid<T>({
   onReorder,
   canDrag,
   onDragStart,
+  haptics = true,
   pageIndicator = true,
   reduceMotion = ReduceMotion.System,
   style,
@@ -187,8 +190,16 @@ export function ReflowGrid<T>({
   onReorder?: (result: DragResult) => void;
   /** Whether an item can be dragged. @default every item can */
   canDrag?: (item: T, index: number) => boolean;
-  /** An item has been lifted: the place for a haptic tap. Called with its key. */
+  /** An item has been lifted. Called with its key. (Haptic feedback is `haptics`.) */
   onDragStart?: (keys: readonly string[]) => void;
+  /**
+   * Haptic feedback for the grid's moments: lifting an item, it moving to another
+   * slot, a drop that changed the order, a page turning during a drag, and
+   * scrubbing the page dots. `true` (the default): `expo-haptics`, if the app has it
+   * installed, and nothing if not (or on web). `false`: none. A function gets each
+   * `HapticEvent`, to give feedback with whatever you use. @default true
+   */
+  haptics?: HapticsOption;
   /**
    * Whether the animations follow the device's reduce-motion setting (they
    * jump to their end when it's on), page turns during a drag included.
@@ -207,6 +218,11 @@ export function ReflowGrid<T>({
 }) {
   const mainHorizontal = axis === 'horizontal';
   const move = useMemo(() => ({ ...MOVE, reduceMotion }), [reduceMotion]);
+  // What gives feedback: the app's function, or `expo-haptics` if it has it (not on web), or nothing.
+  const haptic = useMemo(
+    () => resolveHaptics(haptics, () => (Platform.OS === 'web' ? undefined : expoHaptics(loadExpoHaptics))),
+    [haptics],
+  );
   // Whether the device asks for no motion, and `reduceMotion` goes along with it.
   const systemReduced = useReducedMotion();
   const instant = reduceMotion === ReduceMotion.Always || (reduceMotion === ReduceMotion.System && systemReduced);
@@ -543,6 +559,7 @@ export function ReflowGrid<T>({
     web: Platform.OS === 'web',
     onReorder,
     onDragStart,
+    haptic,
     // The press this finger began is over: it's a drag now.
     onLift: (id) => pending.current.delete(id),
   };
@@ -587,6 +604,7 @@ export function ReflowGrid<T>({
     const to = pg.direction === 'horizontal' ? { x: along, y: offset.current.y } : { x: offset.current.x, y: along };
     scrollRef.current?.scrollTo({ ...to, animated: false });
     track(to);
+    engine.haptic('scrub');
   };
 
   // Two axes. On iOS one scroll view holds both: its content is wider and taller than its frame, so one drag moves it diagonally.

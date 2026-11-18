@@ -1,4 +1,5 @@
 import { DragEngine, HOLD_MS, LONG_PRESS_MS, PAGE_DWELL_MS, PAGE_TURN_MS, SLOP, type DragHost, type DragView, type Offset } from '../dragEngine';
+import { HAPTIC_GAPS, type HapticEvent } from '../haptics';
 import { gridLayout, pagedLayout, type ReflowLayout } from '../layout';
 
 /** A clock the test turns by hand: timers and frames run when it's advanced. */
@@ -70,6 +71,7 @@ function setup({ count = 12, layout, room = { width: 320, height: 300 }, offset 
     reorders: [] as unknown[],
     started: [] as (readonly string[])[],
     lifted: [] as string[],
+    haptics: [] as HapticEvent[],
   };
   const view: DragView<number> = {
     data,
@@ -103,6 +105,7 @@ function setup({ count = 12, layout, room = { width: 320, height: 300 }, offset 
     onReorder: (result) => calls.reorders.push(result),
     onDragStart: (keys) => calls.started.push(keys),
     onLift: (id) => calls.lifted.push(id),
+    haptic: (event) => calls.haptics.push(event),
   };
   engine.view = view;
   return { engine, view, data, calls, advance, pendingFrames, pendingTimers, state };
@@ -477,5 +480,112 @@ describe('dispose', () => {
     t.engine.dispose();
     expect(t.pendingTimers()).toBe(0);
     expect(t.pendingFrames()).toBe(0);
+  });
+});
+
+describe('haptics', () => {
+  const lift = (t: ReturnType<typeof setup>, at = centre(4)) => {
+    t.engine.touchDown('a', at);
+    t.advance(LONG_PRESS_MS + 20);
+  };
+
+  it('gives one for a lift, by a finger or a mouse', () => {
+    const finger = setup();
+    lift(finger);
+    expect(finger.calls.haptics).toEqual(['lift']);
+    const mouse = setup();
+    mouse.engine.osStart(centre(4));
+    expect(mouse.calls.haptics).toEqual(['lift']);
+  });
+
+  it('gives none for a press that is not held, or on an item that cannot be dragged', () => {
+    const quick = setup();
+    quick.engine.touchDown('a', centre(4));
+    quick.advance(100);
+    quick.engine.touchUp('a');
+    expect(quick.calls.haptics).toEqual([]);
+    const no = setup({ canDrag: () => false });
+    lift(no);
+    expect(no.calls.haptics).toEqual([]);
+  });
+
+  it('gives one when the item moves to another slot, and none while it stays in one', () => {
+    const t = setup();
+    lift(t);
+    t.engine.touchMove('a', { x: centre(4).x + 3, y: centre(4).y });
+    expect(t.calls.haptics).toEqual(['lift']);
+    t.engine.touchMove('a', centre(7));
+    expect(t.calls.haptics).toEqual(['lift', 'move']);
+    t.engine.touchMove('a', { x: centre(7).x + 3, y: centre(7).y });
+    expect(t.calls.haptics).toEqual(['lift', 'move']);
+  });
+
+  it('limits the moves that come in a rush, and lets one through once the gap has passed', () => {
+    const t = setup();
+    lift(t);
+    // Three slots in no time at all: one buzz, not three.
+    t.engine.touchMove('a', centre(5));
+    t.engine.touchMove('a', centre(6));
+    t.engine.touchMove('a', centre(7));
+    expect(t.calls.haptics.filter((e) => e === 'move')).toHaveLength(1);
+    t.advance(HAPTIC_GAPS.move! + 20);
+    t.engine.touchMove('a', centre(8));
+    expect(t.calls.haptics.filter((e) => e === 'move')).toHaveLength(2);
+  });
+
+  it('gives one for a drop that changed the order, and none for a cancel or a drop where it began', () => {
+    const dropped = setup();
+    lift(dropped);
+    dropped.engine.touchMove('a', centre(7));
+    dropped.engine.touchUp('a');
+    expect(dropped.calls.haptics).toEqual(['lift', 'move', 'drop']);
+
+    const cancelled = setup();
+    lift(cancelled);
+    cancelled.engine.touchMove('a', centre(7));
+    cancelled.engine.touchCancel('a');
+    expect(cancelled.calls.haptics).toEqual(['lift', 'move']);
+
+    const back = setup();
+    lift(back);
+    back.engine.touchMove('a', centre(7));
+    back.advance(HAPTIC_GAPS.move! + 20);
+    back.engine.touchMove('a', centre(4));
+    back.engine.touchUp('a');
+    expect(back.calls.haptics).not.toContain('drop');
+  });
+
+  it('gives one for each page a drag turns', () => {
+    const t = setup({
+      count: 40,
+      room: { width: 300, height: 200 },
+      axis: 'horizontal',
+      layout: pagedLayout({ direction: 'horizontal', columns: 3, rows: 2, gap: 0 }),
+    });
+    t.engine.touchDown('a', { x: 50, y: 50 });
+    t.advance(LONG_PRESS_MS + 20);
+    t.engine.touchMove('a', { x: 290, y: 100 });
+    expect(t.calls.haptics.filter((e) => e === 'pageTurn')).toHaveLength(0);
+    t.advance(PAGE_DWELL_MS * 2 + 100);
+    expect(t.calls.haptics.filter((e) => e === 'pageTurn')).toHaveLength(2);
+  });
+
+  it('limits the scrub of the page dots like the moves, and says nothing if there is nothing to give', () => {
+    const t = setup();
+    t.engine.haptic('scrub');
+    t.engine.haptic('scrub');
+    expect(t.calls.haptics).toEqual(['scrub']);
+    t.advance(HAPTIC_GAPS.scrub! + 20);
+    t.engine.haptic('scrub');
+    expect(t.calls.haptics).toEqual(['scrub', 'scrub']);
+
+    const silent = setup();
+    silent.view.haptic = undefined;
+    expect(() => {
+      silent.engine.touchDown('a', centre(4));
+      silent.advance(LONG_PRESS_MS + 20);
+      silent.engine.touchMove('a', centre(7));
+      silent.engine.touchUp('a');
+    }).not.toThrow();
   });
 });
