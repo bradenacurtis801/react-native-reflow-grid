@@ -65,8 +65,9 @@ Memoize `layout` and `touchRegions`: a new function lays everything out again.
 | `startInset`, `endInset` | Space the scrolled content must clear at the start/end of the scroll axis (e.g. a header and a tab bar). Content scrolls beneath and rests clear. Default `0`. |
 | `crossStartInset`, `crossEndInset` | For horizontal grids: space rows clear at the top and bottom. |
 | `reduceMotion` | `ReduceMotion.System` (default) jumps animations to their end when the device's reduce-motion setting is on, and so does a page turn during a drag; `ReduceMotion.Never` always animates (on web the grid animates the page turn itself, since the browser's own smooth scrolling is switched off by that setting). |
-| `onReorder` | Turns on drag to reorder (**web only, for now**). Called on a drop that changed the order with `{ keys, moved, from, to }`: the new order of the keys. Put `data` in that order; the grid shows the new order meanwhile, so a `data` that follows a moment later doesn't flicker. |
+| `onReorder` | Turns on drag to reorder. On web a mouse drags through the browser's own drag and drop; a finger, on any platform, holds on an item for a moment to lift it, and the item then follows the finger *(touch is new, and so far only tried in a browser, not on a device)*. Called on a drop that changed the order with `{ keys, moved, from, to }`: the new order of the keys. Put `data` in that order; the grid shows the new order meanwhile, so a `data` that follows a moment later doesn't flicker. |
 | `canDrag` | `(item, index) => boolean`: whether an item can be dragged. Default: all can. |
+| `onDragStart` | Called with the lifted item's key when a finger lifts it: the place for a haptic tap. |
 | `onMounted` | Called with how many cells are mounted after each change. |
 
 ### `masonryLayout(options)`
@@ -102,6 +103,8 @@ const layout = useMemo(() => pagedLayout({ direction: 'horizontal', columns: 3, 
 | `direction` | `'horizontal'`: pages side by side (use `axis="horizontal"`). `'vertical'`: one under another. |
 | `columns`, `rows` | Cells in a page; they share the page equally. |
 | `gap` | A number, or `{ x, y }`. Default `0`. |
+| `pageGap` | Space between one page's cells and the next page's, along `direction`; half is left clear at each end of a page, so the pages' edge cells don't touch while you swipe between them. Default: the `gap` along `direction`. The pages are still a container apart, so snapping is unchanged. |
+| `card` | By default each cell takes an equal share of the page. `{ aspect }` (width ÷ height) or `{ width, height }` (fixed) instead; the cells then sit at the start of the page. |
 
 Use no inset along the way it pages. See the roadmap for how dragging behaves between pages.
 
@@ -162,7 +165,7 @@ Drag and drop will use each platform's own drag-and-drop API (UIKit's drag and d
 
 **Decisions to make before 1.0** (each would be a breaking change later)
 
-1. **Layouts see the data and are queried lazily.** *Done:* `layout(data, container)` returns `{ size, rectOf(i), indicesIn(region) }`, so layouts can depend on item sizes (`masonryLayout`), and only the visible region, the dragged item and the hover target need evaluating. `gridLayout` answers analytically; `masonryLayout` builds its rects in one pass over `data`, so recomputing from the first changed index is still to do. *Drag:* a preview is the layout of the reordered data, while the finger is hit-tested against the layout the drag began with — it doesn't move as the others make room, so the target can't flip under a resting finger — with a margin (hysteresis) before it moves to the next slot. The logic is in `src/drag.ts`, pure TypeScript and tested; the grid drives it from the browser's drag and drop on web. Native drivers will receive only the rects they need.
+1. **Layouts see the data and are queried lazily.** *Done:* `layout(data, container)` returns `{ size, rectOf(i), indicesIn(region) }`, so layouts can depend on item sizes (`masonryLayout`), and only the visible region, the dragged item and the hover target need evaluating. `gridLayout` answers analytically; `masonryLayout` builds its rects in one pass over `data`, so recomputing from the first changed index is still to do. *Drag:* a preview is the layout of the reordered data, while the finger is hit-tested against the layout the drag began with — it doesn't move as the others make room, so the target can't flip under a resting finger — with a margin (hysteresis) before it moves to the next slot. The logic is pure TypeScript and tested: `src/drag.ts` (the target and the preview order) and `src/dragEngine.ts` (the engine that follows the pointer, scrolls and turns pages, and reports the drop). Input comes from adapters: a finger held on an item (the grid's own touch events) and, on web, the browser's drag and drop (`src/webDrag.ts`); a native OS driver would be another. Native drivers will receive only the rects they need.
 2. **A drag is a session of items, not a key.** `{ origin: 'internal' | 'external', items: [{ key?, types, local? }] }`: a drop may carry items that aren't in `data` (another app, another grid), and platform sessions already carry a list of items. v1 behavior caps a drag at one internal item, so multi-item stacking can follow without a breaking change.
 
 **Scope**

@@ -11,11 +11,22 @@ import {
   type StyleProp,
   type ViewStyle,
 } from 'react-native';
-import Animated, { ReduceMotion, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
+import Animated, {
+  ReduceMotion,
+  useAnimatedStyle,
+  useReducedMotion,
+  useSharedValue,
+  withSpring,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
 
-import { beginDrag, edgeVelocity, endDrag, slotAt, updateDrag, type DragResult, type DragSession, type DragState, type Point } from './drag';
-import { intersects, type Rect, type ReflowLayout, type ReflowResult, type Region, type Size } from './layout';
+import type { DragResult, Point } from './drag';
+import { SLOP, type Offset } from './dragEngine';
+import { intersects, type Rect, type ReflowLayout, type Region, type Size } from './layout';
+import { useDragReorder } from './useDragReorder';
+import { attachWebDrag } from './webDrag';
 
 /** How cells glide to a new place: a quick spring, so one set going while another is still moving carries on from where it is. */
 const MOVE = { damping: 26, stiffness: 320, mass: 0.9 };
@@ -24,27 +35,24 @@ const LEAVE_MS = 180;
 const LEAVE_SCALE = 0.5;
 /** A cell added later starts this small and grows in. */
 const ENTER_SCALE = 0.6;
-/** A finger that moves further than this (pt) from where it went down is scrolling, not pressing. */
-const SLOP = 10;
 /** Cells this far (pt) beyond the screen are kept mounted, so a scroll doesn't mount them at the edge. */
 const BUFFER = 300;
-/** Held at an edge this long (ms), a drag in a paged layout turns the page; held on, it turns another. */
-const PAGE_DWELL_MS = 700;
-/** A page turn on web takes this long (ms). */
-const PAGE_TURN_MS = 320;
-/** A drag scrolls at this fraction of its speed when it reaches an edge, and builds up to all of it over `RAMP_MS`. */
-const RAMP_FROM = 0.3;
-const RAMP_MS = 1000;
-/** A drag whose pointer has sent nothing for this long (ms) has left the window: it stops scrolling. */
-const QUIET_MS = 500;
-/** After a drop, the new order is held this long (ms) for `data` to follow. */
-const HOLD_MS = 600;
+/** A lifted item is this much bigger. */
+const LIFT_SCALE = 1.06;
 /** A dragged item's slot dims to this, to show where it will land. */
 const DRAGGED_OPACITY = 0.35;
 
 interface Leaving<T> {
   key: string;
   item: T;
+}
+
+/** Where a lifted item follows the finger, in the content's space: the finger, and where it holds the item. */
+interface Finger {
+  x: SharedValue<number>;
+  y: SharedValue<number>;
+  gx: SharedValue<number>;
+  gy: SharedValue<number>;
 }
 
 interface ItemInfo {
@@ -72,12 +80,6 @@ interface Pending {
   startY: number;
   /** It moved too far: a scroll, not a press. */
   moved: boolean;
-}
-
-/** A scroll position, in the scroll view's terms (what `contentOffset` reports). */
-interface Offset {
-  x: number;
-  y: number;
 }
 
 function sameIndices(a: readonly number[] | undefined, b: readonly number[] | undefined): boolean {
@@ -129,6 +131,7 @@ export function ReflowGrid<T>({
   onMounted,
   onReorder,
   canDrag,
+  onDragStart,
   reduceMotion = ReduceMotion.System,
   style,
 }: {
@@ -165,14 +168,17 @@ export function ReflowGrid<T>({
   /** How many cells are mounted, after each change of them. */
   onMounted?: (count: number) => void;
   /**
-   * Turns on drag to reorder (web, for now): a dragged item's slot follows the
-   * finger and the others make room. Called on a drop that changed the order,
+   * Turns on drag to reorder: on web with a mouse through the browser's drag and
+   * drop, and with a finger anywhere by holding on an item to lift it. The others
+   * make room as it's dragged. Called on a drop that changed the order,
    * with the new order of the keys — put `data` in that order. The grid shows
    * the new order meanwhile, so a `data` that follows a moment later doesn't flicker.
    */
   onReorder?: (result: DragResult) => void;
   /** Whether an item can be dragged. @default every item can */
   canDrag?: (item: T, index: number) => boolean;
+  /** An item has been lifted: the place for a haptic tap. Called with its key. */
+  onDragStart?: (keys: readonly string[]) => void;
   /**
    * Whether the animations follow the device's reduce-motion setting (they
    * jump to their end when it's on), page turns during a drag included.
@@ -226,21 +232,16 @@ export function ReflowGrid<T>({
     ]);
   }
 
-  // Dragging: what's shown is `data` in the order of the drag's preview — after a
+  // Dragging (see `dragEngine.ts`): what's shown is `data` in the order of the drag's preview — after a
   // drop, in the order it left, until `data` follows (or a moment passes).
-  const [drag, setDrag] = useState<DragState>();
-  const dragRef = useRef<DragState>(undefined);
-  const [held, setHeld] = useState<readonly string[]>();
-  const byKey = useRef(new Map<string, T>());
-  if (held && seen !== data) setHeld(undefined);
-  useEffect(() => {
-    if (!held) return;
-    const timer = setTimeout(() => setHeld(undefined), HOLD_MS);
-    return () => clearTimeout(timer);
-  }, [held]);
-  const order = drag?.preview ?? held;
-  const items = useMemo(() => (order ? order.map((k) => byKey.current.get(k) as T) : data), [order, data]);
-  const draggedKeys = useMemo(() => new Set(drag?.dragged), [drag?.dragged]);
+  const { engine, snap, items, draggedKeys, lifted } = useDragReorder<T>(data);
+  const { drag, floating } = snap;
+  // A finger's drag lifts the item itself, which follows the finger: a cell follows these.
+  const fingerX = useSharedValue(0);
+  const fingerY = useSharedValue(0);
+  const grabX = useSharedValue(0);
+  const grabY = useSharedValue(0);
+  const finger = useMemo<Finger>(() => ({ x: fingerX, y: fingerY, gx: grabX, gy: grabY }), [fingerX, fingerY, grabX, grabY]);
 
   // The layout's room: the viewport, less the cross-axis insets (a sideways grid's rows sit between them).
   const roomWidth = viewport?.width;
@@ -281,8 +282,10 @@ export function ReflowGrid<T>({
   // A sideways grid never scrolls across: its y stays 0 (the header's space is its frame's padding, not an offset).
   const onScrollX = (e: NativeSyntheticEvent<NativeScrollEvent>) =>
     track({ x: e.nativeEvent.contentOffset.x, y: mainHorizontal ? 0 : offset.current.y });
-  const indices = indicesAt(offset.current);
-  shown.current = indices;
+  const shownNow = indicesAt(offset.current);
+  shown.current = shownNow;
+  // The lifted item follows the finger, so it's drawn even when its slot has scrolled away.
+  const indices = shownNow && lifted >= 0 && !shownNow.includes(lifted) ? [...shownNow, lifted].sort((a, b) => a - b) : shownNow;
 
   // The last known slot of each item on screen, kept for a leaving one too: it
   // leaves from there. An item off screen has none, so it moves with no animation.
@@ -372,6 +375,8 @@ export function ReflowGrid<T>({
           start={lastRects.current.get(key)}
           appear={settled.current && !knownKeys.current.has(key)}
           dragging={info.dragging}
+          floating={floating}
+          finger={finger}
           cellNodes={cellNodes}
           onGone={gone}
           reduceMotion={reduceMotion}
@@ -425,6 +430,8 @@ export function ReflowGrid<T>({
     const { changedTouches } = e.nativeEvent;
     // On web this is a `TouchList`, not an array.
     const downs = Array.from(changedTouches, (t) => ({ id: t.identifier, x: t.pageX, y: t.pageY }));
+    const first = downs[0];
+    if (first) engine.touchDown(first.id, { x: first.x, y: first.y });
     const place = (left: number, top: number) => {
       for (const { id, x: pageX, y: pageY } of downs) {
         const region = regionAt(pageX, pageY, left, top);
@@ -436,6 +443,7 @@ export function ReflowGrid<T>({
   };
   const onTouchMove = (e: GestureResponderEvent) => {
     for (const t of e.nativeEvent.changedTouches) {
+      engine.touchMove(t.identifier, { x: t.pageX, y: t.pageY });
       const p = pending.current.get(t.identifier);
       if (!p || p.moved) continue;
       if (Math.hypot(t.pageX - p.startX, t.pageY - p.startY) > SLOP) {
@@ -448,6 +456,7 @@ export function ReflowGrid<T>({
     lastTouchEnd.current = Date.now();
     const { changedTouches } = e.nativeEvent;
     for (const t of changedTouches) {
+      engine.touchUp(t.identifier);
       const p = pending.current.get(t.identifier);
       pending.current.delete(t.identifier);
       if (!p) continue;
@@ -455,7 +464,10 @@ export function ReflowGrid<T>({
     }
   };
   const onTouchCancel = (e: GestureResponderEvent) => {
-    for (const t of e.nativeEvent.changedTouches) pending.current.delete(t.identifier);
+    for (const t of e.nativeEvent.changedTouches) {
+      engine.touchCancel(t.identifier);
+      pending.current.delete(t.identifier);
+    }
   };
   // Web with a mouse sends no touch events, only clicks. A touch screen's tap sends both, so a click right after a touch end is the same press.
   const onClick = (e: { clientX: number; clientY: number }) => {
@@ -465,229 +477,49 @@ export function ReflowGrid<T>({
     regionAt(e.clientX, e.clientY, left, top)?.onPress();
   };
 
-  // Drag to reorder on web, through the browser's own drag and drop. It sends its
-  // events to the grid's element (the props a `View` forwards don't include them),
-  // so they're listened for there, and read what's current from `driver`.
-  // While the pointer is near an edge of what's on screen the content scrolls
-  // that way, and the target is worked out again as it moves under the pointer.
-  // The browser sends no events for a pointer that is still, so a frame loop
-  // does the scrolling; `over` starts it, and it ends itself.
-  const pointer = useRef<{ x: number; y: number; at: number }>(undefined);
-  // A page turn on web is worked out here, a frame at a time: the browser's own smooth scroll is
-  // switched off by a reduce-motion setting, which would make every turn instant. Scroll snap is
-  // off while it runs, so it doesn't fight the steps.
-  const [turning, setTurning] = useState(false);
-  const scroller = useRef<{ raf?: number; time: number; pos: Offset; held?: number; dwell?: { dir: number; since: number }; turn?: { from: number; to: number; start: number; horizontal: boolean } }>({ time: 0, pos: { x: 0, y: 0 } });
-  const stopScroll = () => {
-    if (scroller.current.raf !== undefined) cancelAnimationFrame(scroller.current.raf);
-    scroller.current.raf = undefined;
-  };
-  useEffect(() => stopScroll, []); // eslint-disable-line react-hooks/exhaustive-deps
-  /** How fast, along each axis, the pointer (in client coordinates) is asking the content to scroll. */
-  const scrollSpeed = (p: Point): Point => {
-    const at = origin.current ?? { left: 0, top: 0 };
-    if (!viewport) return { x: 0, y: 0 };
-    return {
-      x: axis === 'vertical' ? 0 : edgeVelocity(p.x - at.left, insetX.start, viewport.width - insetX.end),
-      y: mainHorizontal ? 0 : edgeVelocity(p.y - at.top, insetY.start, viewport.height - insetY.end),
-    };
-  };
-  /** Works the target out again for the pointer (in client coordinates), after the content has moved under it. */
-  const retarget = (state: DragState, base: ReflowResult, p: Point) => {
-    const at = origin.current ?? { left: 0, top: 0 };
-    const next = updateDrag(state, base, contentPoint(p.x, p.y, at.left, at.top));
-    if (next !== state) {
-      dragRef.current = next;
-      setDrag(next);
-    }
-  };
-  const frame = useRef<(time: number) => void>(undefined);
-  frame.current = (time) => {
-    const scroll = scroller.current;
-    scroll.raf = undefined;
-    const again = () => {
-      scroll.raf = requestAnimationFrame((t) => frame.current?.(t));
-    };
-    const turn = scroll.turn;
-    if (turn) {
-      const t = Math.min(Math.max((time - turn.start) / PAGE_TURN_MS, 0), 1);
-      const at = turn.from + (turn.to - turn.from) * (1 - (1 - t) ** 3);
-      const to = turn.horizontal ? { x: at, y: offset.current.y } : { x: offset.current.x, y: at };
-      scrollRef.current?.scrollTo({ ...to, animated: false });
-      track(to);
-      if (t >= 1) {
-        scroll.turn = undefined;
-        // Held on, it takes another dwell to turn the next.
-        scroll.dwell = undefined;
-        setTurning(false);
+  // What the engine reads of the grid: new on every render, so it never works from an old one.
+  engine.view = {
+    data,
+    items,
+    keyOf: keyExtractor,
+    canDrag,
+    enabled: onReorder != null,
+    placed,
+    viewport,
+    axis,
+    inset: { x: insetX, y: insetY },
+    offset: () => offset.current,
+    toContent: (page) => contentPoint(page.x, page.y, origin.current?.left ?? 0, origin.current?.top ?? 0),
+    toRoot: (page) => ({ x: page.x - (origin.current?.left ?? 0), y: page.y - (origin.current?.top ?? 0) }),
+    scrollTo: (to, animated) => scrollRef.current?.scrollTo({ x: to.x, y: to.y, animated }),
+    track,
+    setFinger: (point, grab) => {
+      if (grab) {
+        grabX.set(grab.x);
+        grabY.set(grab.y);
       }
-    }
-    const state = dragRef.current;
-    const base = baseLayout.current;
-    const p = pointer.current;
-    // Over, or the pointer has gone quiet (out of the window): nothing more to do, but finish a turn.
-    if (!state || !base || !p || !viewport || !placed || time - p.at > QUIET_MS) {
-      if (scroll.turn) again();
-      return;
-    }
-    const speed = scrollSpeed(p);
-    if (speed.x === 0 && speed.y === 0) {
-      scroll.dwell = undefined;
-      if (scroll.turn) again();
-      return;
-    }
-    // The longer it's held at the edge, the faster it goes.
-    const ramp = RAMP_FROM + (1 - RAMP_FROM) * Math.min(Math.max(time - (scroll.held ?? time), 0) / RAMP_MS, 1);
-    // A paged layout doesn't scroll steadily: held at an edge it turns the page, and turns another if still held.
-    const pages = placed.pages;
-    if (pages) {
-      const horizontal = pages.direction === 'horizontal';
-      const dir = Math.sign(horizontal ? speed.x : speed.y);
-      if (scroll.dwell?.dir !== dir) {
-        scroll.dwell = { dir, since: time };
-      } else if (time - scroll.dwell.since >= PAGE_DWELL_MS && !scroll.turn) {
-        const from = horizontal ? offset.current.x : offset.current.y;
-        const to = Math.min(Math.max(Math.round(from / pages.stride) + dir, 0), pages.count - 1) * pages.stride;
-        scroll.dwell = { dir, since: time };
-        if (to !== from) {
-          if (Platform.OS === 'web' && !instant) {
-            scroll.turn = { from, to, start: time, horizontal };
-            setTurning(true);
-          } else {
-            // Native animates its own (unless asked not to); web, asked not to, jumps.
-            scrollRef.current?.scrollTo({ x: horizontal ? to : offset.current.x, y: horizontal ? offset.current.y : to, animated: Platform.OS !== 'web' && !instant });
-          }
-        }
-      }
-      // The pages slide under the pointer, so its target follows.
-      retarget(state, base, p);
-      again();
-      return;
-    }
-    const dt = Math.min((time - scroll.time) / 1000, 0.05);
-    scroll.time = time;
-    // The scroll view's content: the items, with the insets as padding.
-    const room = {
-      x: Math.max(placed.size.width + insetX.start + insetX.end - viewport.width, 0),
-      y: Math.max(placed.size.height + insetY.start + insetY.end - viewport.height, 0),
-    };
-    const pos = {
-      x: Math.min(Math.max(scroll.pos.x + speed.x * ramp * dt, 0), room.x),
-      y: Math.min(Math.max(scroll.pos.y + speed.y * ramp * dt, 0), room.y),
-    };
-    if (pos.x !== scroll.pos.x || pos.y !== scroll.pos.y) {
-      scroll.pos = pos;
-      scrollRef.current?.scrollTo({ x: pos.x, y: pos.y, animated: false });
-      track(pos);
-      retarget(state, base, p);
-    }
-    scroll.raf = requestAnimationFrame((t) => frame.current?.(t));
-  };
-  const finish = (cancelled: boolean) => {
-    stopScroll();
-    const turn = scroller.current.turn;
-    if (turn) {
-      // A turn still under way lands at once.
-      const to = turn.horizontal ? { x: turn.to, y: offset.current.y } : { x: offset.current.x, y: turn.to };
-      scrollRef.current?.scrollTo({ ...to, animated: false });
-      track(to);
-      scroller.current.turn = undefined;
-      setTurning(false);
-    }
-    scroller.current.dwell = undefined;
-    scroller.current.held = undefined;
-    const state = dragRef.current;
-    if (!state) return;
-    dragRef.current = undefined;
-    const result = endDrag(state, cancelled);
-    if (result) {
-      setHeld(result.keys);
-      onReorder?.(result);
-    }
-    setDrag(undefined);
-  };
-  const baseLayout = useRef<ReflowResult>(undefined);
-  const driver = useRef<Record<'start' | 'over' | 'drop' | 'end', (e: DragEvent) => void>>(undefined);
-  driver.current = {
-    start: (e) => {
-      const at = origin.current ?? { left: 0, top: 0 };
-      const point = contentPoint(e.clientX, e.clientY, at.left, at.top);
-      const index = placed ? slotAt(placed, items.length, point) : undefined;
-      const rect = index !== undefined ? placed?.rectOf(index) : undefined;
-      const over = rect && point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height;
-      if (!placed || index === undefined || !rect || !over || (canDrag && !canDrag(items[index]!, index))) {
-        e.preventDefault();
-        return;
-      }
-      const keys = items.map(keyExtractor);
-      const session: DragSession = { origin: 'internal', items: [{ key: keys[index]!, types: ['text/plain'], local: items[index] }] };
-      const state = beginDrag(keys, session);
-      if (!state || !e.dataTransfer) return;
-      byKey.current = new Map(items.map((item, i) => [keys[i]!, item]));
-      baseLayout.current = placed;
-      dragRef.current = state;
-      setDrag(state);
-      e.dataTransfer.effectAllowed = 'move';
-      e.dataTransfer.setData('text/plain', keys[index]!);
-      const node = cellNodes.current.get(keys[index]!) as Element | undefined;
-      if (node) e.dataTransfer.setDragImage(node as HTMLElement, point.x - rect.x, point.y - rect.y);
+      fingerX.set(point.x);
+      fingerY.set(point.y);
     },
-    over: (e) => {
-      const state = dragRef.current;
-      const base = baseLayout.current;
-      // Only a drag that began here can land here.
-      if (!state || !base) return;
-      e.preventDefault();
-      if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
-      const at = origin.current ?? { left: 0, top: 0 };
-      const next = updateDrag(state, base, contentPoint(e.clientX, e.clientY, at.left, at.top));
-      if (next !== state) {
-        dragRef.current = next;
-        setDrag(next);
-      }
-      const p = { x: e.clientX, y: e.clientY, at: performance.now() };
-      pointer.current = p;
-      const scroll = scroller.current;
-      if (scroll.raf === undefined) {
-        const speed = scrollSpeed(p);
-        if (speed.x !== 0 || speed.y !== 0) {
-          scroll.pos = { ...offset.current };
-          scroll.time = p.at;
-          scroll.held = p.at;
-          scroll.raf = requestAnimationFrame((t) => frame.current?.(t));
-        }
-      }
-    },
-    drop: (e) => {
-      if (!dragRef.current) return;
-      e.preventDefault();
-      finish(false);
-    },
-    // After a drop this has nothing left to do; after one that missed the grid, it ends the drag.
-    end: () => finish(true),
+    instant,
+    web: Platform.OS === 'web',
+    onReorder,
+    onDragStart,
+    // The press this finger began is over: it's a drag now.
+    onLift: (id) => pending.current.delete(id),
   };
+  // On web a mouse drags through the browser's own drag and drop.
   const reorderable = onReorder != null;
   useEffect(() => {
     const el = Platform.OS === 'web' && reorderable ? (root.current as unknown as HTMLElement | null) : null;
-    if (!el) return;
-    const types = { start: 'dragstart', over: 'dragover', drop: 'drop', end: 'dragend' } as const;
-    const listeners = (Object.keys(types) as (keyof typeof types)[]).map((name) => {
-      const listener = (e: Event) => driver.current?.[name](e as DragEvent);
-      el.addEventListener(types[name], listener);
-      return [types[name], listener] as const;
-    });
-    el.setAttribute('draggable', 'true');
-    return () => {
-      for (const [type, listener] of listeners) el.removeEventListener(type, listener);
-      el.removeAttribute('draggable');
-    };
-  }, [reorderable]); // eslint-disable-line react-hooks/exhaustive-deps
+    return el ? attachWebDrag(el, engine, (key) => cellNodes.current.get(key)) : undefined;
+  }, [reorderable, engine]);
 
   // A paged layout snaps. Native has `pagingEnabled`. On web it's CSS scroll snap, with a marker at the
   // start of each page: `pagingEnabled` there would replace the style of the content view.
   const pages = placed?.pages;
   const web = Platform.OS === 'web';
-  const snap = pages && web && !turning ? ({ scrollSnapType: pages.direction === 'horizontal' ? 'x mandatory' : 'y mandatory' } as ViewStyle) : undefined;
+  const snapStyle = pages && web && !snap.turning ? ({ scrollSnapType: pages.direction === 'horizontal' ? 'x mandatory' : 'y mandatory' } as ViewStyle) : undefined;
   const markers =
     pages && web
       ? Array.from({ length: pages.count }, (_, page) => (
@@ -748,8 +580,10 @@ export function ReflowGrid<T>({
         ]}
         onScroll={mainHorizontal ? onScrollX : nested || !both ? onScrollY : onScrollBoth}
         scrollEventThrottle={16}
+        // A lifted item follows the finger, which must not scroll the grid as well.
+        scrollEnabled={!(drag && floating)}
         // A sideways grid's scroll view is as tall as its row, so its indicator sits under the tiles, not at the room's foot.
-        style={[mainHorizontal && placed && roomHeight != null ? { height: Math.min(placed.size.height, roomHeight) } : undefined, snap]}
+        style={[mainHorizontal && placed && roomHeight != null ? { height: Math.min(placed.size.height, roomHeight) } : undefined, snapStyle]}
         pagingEnabled={pages != null && !web}
         // A one-axis grid scrolls only along its axis: no bounce, and no drift across. Two axes lock nothing.
         alwaysBounceVertical={!mainHorizontal}
@@ -793,6 +627,8 @@ function ReflowCell({
   leaving = false,
   appear = false,
   dragging = false,
+  floating = false,
+  finger,
   cellNodes,
   onGone,
   reduceMotion,
@@ -806,8 +642,10 @@ function ReflowCell({
   leaving?: boolean;
   /** Added after the rest were shown: grows in. */
   appear?: boolean;
-  /** Being dragged: dims, to mark the slot it will land in. */
+  /** Being dragged: dims, to mark the slot it will land in, or, `floating`, is lifted and follows the finger. */
   dragging?: boolean;
+  floating?: boolean;
+  finger?: Finger;
   /** Where the cell registers its element (web), for the image a drag carries. */
   cellNodes: { current: Map<string, unknown> };
   onGone: (id: string) => void;
@@ -823,6 +661,13 @@ function ReflowCell({
   const scale = useSharedValue(appear ? ENTER_SCALE : 1);
   const opacity = useSharedValue(appear ? 0 : 1);
   const dim = useSharedValue(1);
+  const lifted = useSharedValue(0);
+  const wasLifted = useRef(false);
+  const noFinger = useSharedValue(0);
+  const fx = finger?.x ?? noFinger;
+  const fy = finger?.y ?? noFinger;
+  const gx = finger?.gx ?? noFinger;
+  const gy = finger?.gy ?? noFinger;
   // The first placement isn't a move; only later ones are logged as such.
   const placed = useRef(false);
 
@@ -853,15 +698,42 @@ withSpring(rect.x, move),
   }, [leaving]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
-    dim.set(withTiming(dragging ? DRAGGED_OPACITY : 1, { duration: LEAVE_MS, reduceMotion }));
-  }, [dragging]); // eslint-disable-line react-hooks/exhaustive-deps
+    dim.set(withTiming(dragging && !floating ? DRAGGED_OPACITY : 1, { duration: LEAVE_MS, reduceMotion }));
+  }, [dragging, floating]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const style = useAnimatedStyle(() => ({
-    width: w.get(),
-    height: h.get(),
-    opacity: opacity.get() * dim.get(),
-    transform: [{ translateX: x.get() }, { translateY: y.get() }, { scale: scale.get() }],
-  }));
+  // Lifted: it follows the finger, and grows a little. Dropped: it settles into its slot from where the finger left it.
+  useEffect(() => {
+    if (dragging && floating) {
+      wasLifted.current = true;
+      lifted.set(1);
+      scale.set(withSpring(LIFT_SCALE, move));
+    } else if (wasLifted.current) {
+      wasLifted.current = false;
+      x.set(fx.get() - gx.get());
+      y.set(fy.get() - gy.get());
+      lifted.set(0);
+      if (rect) {
+        x.set(withSpring(rect.x, move));
+        y.set(withSpring(rect.y, move));
+      }
+      scale.set(withSpring(1, move));
+    }
+  }, [dragging, floating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const style = useAnimatedStyle(() => {
+    const up = lifted.get() === 1;
+    return {
+      width: w.get(),
+      height: h.get(),
+      opacity: opacity.get() * dim.get(),
+      zIndex: up ? 100 : 0,
+      transform: [
+        { translateX: up ? fx.get() - gx.get() : x.get() },
+        { translateY: up ? fy.get() - gy.get() : y.get() },
+        { scale: scale.get() },
+      ],
+    };
+  });
 
   return (
     <Animated.View
