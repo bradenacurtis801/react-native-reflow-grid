@@ -73,7 +73,7 @@ Memoize `layout` and `touchRegions`: a new function lays everything out again.
 | `canDrag` | `(item, index) => boolean`: whether an item can be dragged. Default: all can. |
 | `pageIndicator` | For a paged layout: dots, one per page and lit for the one on screen, shown where the scroll indicator along the pages would be (the bottom edge for pages side by side, the right edge for pages one under another), in place of it. `{ color, activeColor, size, spacing, maxDots, scrub }` style them; the colours default to light dots on a dark screen and dark on a light one. The dots follow the swipe: as you drag towards the next page the dot you're leaving shrinks and dims while the next one grows and brightens, in step with your finger. With more pages than `maxDots` (7) the row slides along with the swipe when the page on screen reaches its end, the dots at its ends shrinking to say there are more. **Tap a dot** to go to its page (an animated scroll when it's next door, at once when it's further). **Drag along the dots to scrub** through the pages: movement is relative to where you grabbed, and it goes by how fast you drag, as scrubbing a video does. Slowly, it's a page for every dot's width, so the dots follow your finger and you can stop on any page; flick, and a drag across the screen goes through all of them. A label (`27 / 52`) says where you are. The dots sit on a bigger touch area than they show, and touches there don't reach the grid beneath. `scrub: false` makes them display only. `false`: no dots, and the scroll indicator stays. Default `true`. |
 | `haptics` | Feedback for the grid's moments. **On by default**: with `expo-haptics` installed the grid taps when an item is lifted (medium), taps lightly as it moves to another slot and on a drop that changed the order, and ticks (the lightest feedback) when a page turns during a drag or you scrub the page dots. Without `expo-haptics`, and on web, it does nothing. `false` turns it off; a function `(event) => void` gets each moment (`'lift' \| 'move' \| 'drop' \| 'pageTurn' \| 'scrub'`) to give feedback with whatever you use. The frequent ones (`move`, `scrub`) are limited to one every 60 / 50 ms. |
-| `onDragStart` | Called with the lifted item's key when an item is lifted. |
+| `onDragStart` | Called with the drag's `DragSession` (what was lifted) when a drag begins. |
 | `onMounted` | Called with how many cells are mounted after each change. |
 
 ### `masonryLayout(options)`
@@ -157,7 +157,18 @@ Pass `onReorder` to turn it on. The grid stays controlled: it shows the new orde
 />
 ```
 
-`onReorder` is called on a drop that changed the order, with a `DragResult`: `{ keys, moved, from, to }`, the new order of the keys, the keys that moved, and where the first of them was and now is. `canDrag(item, index)` opts items out, and `onDragStart(keys)` is called when one is lifted. A dragged item's `renderItem` gets `dragging: true`.
+`onReorder` is called on a drop that changed the order, with a `DragResult`: `{ session, keys, moved, from, to }`, the drag, the new order of the keys, the keys that moved, and where the first of them was and now is. `canDrag(item, index)` opts items out, and `onDragStart(session)` is called when a drag begins. A dragged item's `renderItem` gets `dragging: true`.
+
+A drag is a `DragSession`, a list of items rather than a single key:
+
+```ts
+interface DragSession {
+  origin: 'internal' | 'external';
+  items: { key?: string; types: readonly string[]; local?: unknown }[];
+}
+```
+
+`key` is the item's key in `data` (an item from another grid or app has none), `types` say what it can be read as, and `local` is what a drag inside the app carries; for an item of the grid, the item. Today the grid lifts one internal item at a time, so `items` has one entry. The shape is already the one that dragging several items together, or items from elsewhere, will use, so those can come without changing your callbacks.
 
 - **Input.** On web a mouse drags through the browser's own drag and drop. A finger, on any platform, holds on an item for 350 ms to lift it, and the item then follows the finger. *Touch dragging has so far only been tried in a browser, not on a device.*
 - **Reflow.** The others glide aside as the item moves. The finger is hit-tested against the layout the drag began with, with a margin before it moves to the next slot, so the target can't flip under a resting finger.
@@ -188,14 +199,14 @@ Drag works today through JavaScript (above). Using each platform's own drag-and-
 
 **Decisions to make before 1.0** (each would be a breaking change later)
 
-1. **A drag is a session of items, not a key.** `{ origin: 'internal' | 'external', items: [{ key?, types, local? }] }`: a drop may carry items that aren't in `data` (another app, another grid), and platform sessions already carry a list of items. v1 behavior caps a drag at one internal item, so multi-item stacking can follow without a breaking change.
+1. **A drag is a session of items, not a key.** *Done:* `onDragStart` and `onReorder` carry a `DragSession`, `{ origin, items: [{ key?, types, local? }] }`, because a drop may carry items that aren't in `data` (another app, another grid) and platform sessions already carry a list of items. The grid still lifts one internal item, so multi-item stacking can follow without a breaking change.
 2. **Layouts recompute from the first change.** Layouts already see the data and are queried lazily (`rectOf`, `indicesIn`), so only the visible region, the dragged item and the hover target are evaluated. `masonryLayout` still builds its rects in one pass over `data`; recomputing from the first changed index is to do.
 
 **Scope**
 
 - **Next:** a configurable long-press and drag-handle regions; checking touch dragging on iOS and Android devices.
 - **v1:** reorder inside one grid on iOS through the platform drag session, with typed payloads.
-- **v1.x:** joining, multi-item sessions, an external drop-zone API (trash, eject).
+- **v1.x:** joining, lifting several items together, an external drop-zone API (trash, eject).
 - **Later:** Android native driver, cross-grid and cross-app polish.
 
 ## License

@@ -125,9 +125,10 @@ describe('updateDrag and endDrag', () => {
   });
 
   it('reports what a drop changed', () => {
-    let state = beginDrag(all, session('1'))!;
+    const lifted = session('1');
+    let state = beginDrag(all, lifted)!;
     state = updateDrag(state, layout, centre(4));
-    expect(endDrag(state)).toEqual({ keys: ['0', '2', '3', '4', '1', '5', '6', '7'], moved: ['1'], from: 1, to: 4 });
+    expect(endDrag(state)).toEqual({ session: lifted, keys: ['0', '2', '3', '4', '1', '5', '6', '7'], moved: ['1'], from: 1, to: 4 });
   });
 
   it('reports nothing for a cancelled drag', () => {
@@ -136,10 +137,11 @@ describe('updateDrag and endDrag', () => {
   });
 
   it('moves a block of several, landing the first of them on the target', () => {
-    let state = beginDrag(all, session('1', '2'))!;
+    const lifted = session('1', '2');
+    let state = beginDrag(all, lifted)!;
     state = updateDrag(state, layout, centre(5));
     expect(state.preview).toEqual(['0', '3', '4', '5', '6', '1', '2', '7']);
-    expect(endDrag(state)).toEqual({ keys: state.preview, moved: ['1', '2'], from: 1, to: 5 });
+    expect(endDrag(state)).toEqual({ session: lifted, keys: state.preview, moved: ['1', '2'], from: 1, to: 5 });
   });
 
   it('puts a block that is dragged past the end at the end', () => {

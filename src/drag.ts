@@ -9,8 +9,9 @@ export interface Point {
 /**
  * One thing being dragged. `key` is its key in the grid's `data` when it came
  * from there; an item from elsewhere (another app, another grid) has none.
- * `types` say what it can be read as, `local` is what a drag within the app
- * carries along.
+ * `types` say what it can be read as (MIME types or platform type identifiers),
+ * `local` is what a drag within the app carries along: for an item of the grid,
+ * the item.
  */
 export interface DragItem {
   key?: string;
@@ -18,7 +19,12 @@ export interface DragItem {
   local?: unknown;
 }
 
-/** A drag, from the first lift to the drop: everything lifted together, and where it came from. */
+/**
+ * A drag, from the first lift to the drop: everything lifted together, and where
+ * it came from. A drag is always a list of items, so a drag of several items, or
+ * one that carries items from another grid or app, is the same shape as one item
+ * lifted from the grid. For now a drag the grid begins lifts one internal item.
+ */
 export interface DragSession {
   origin: 'internal' | 'external';
   items: readonly DragItem[];
@@ -44,6 +50,8 @@ export interface DragState {
 
 /** What a finished drag changed. */
 export interface DragResult {
+  /** The drag: what was lifted. */
+  session: DragSession;
   /** The new order of the keys. */
   keys: readonly string[];
   /** The keys that moved, in order. */
@@ -155,7 +163,7 @@ export function endDrag(state: DragState, cancelled = false): DragResult | undef
   if (cancelled) return undefined;
   const moved = state.preview.length === state.keys.length && state.preview.some((k, i) => k !== state.keys[i]);
   if (!moved) return undefined;
-  return { keys: state.preview, moved: state.dragged, from: state.keys.indexOf(state.dragged[0]!), to: state.preview.indexOf(state.dragged[0]!) };
+  return { session: state.session, keys: state.preview, moved: state.dragged, from: state.keys.indexOf(state.dragged[0]!), to: state.preview.indexOf(state.dragged[0]!) };
 }
 
 /** How far (pt) in from the edge of what's on screen a drag starts scrolling. */

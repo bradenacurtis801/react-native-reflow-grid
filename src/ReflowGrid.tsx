@@ -22,7 +22,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
 
-import type { DragResult, Point } from './drag';
+import type { DragResult, DragSession, Point } from './drag';
 import { SLOP, type Offset } from './dragEngine';
 import { intersects, type Rect, type ReflowLayout, type Region, type Size } from './layout';
 import { resolveHaptics, expoHaptics, type HapticsOption } from './haptics';
@@ -190,8 +190,8 @@ export function ReflowGrid<T>({
   onReorder?: (result: DragResult) => void;
   /** Whether an item can be dragged. @default every item can */
   canDrag?: (item: T, index: number) => boolean;
-  /** An item has been lifted. Called with its key. (Haptic feedback is `haptics`.) */
-  onDragStart?: (keys: readonly string[]) => void;
+  /** A drag has begun: called with what was lifted (see `DragSession`). (Haptic feedback is `haptics`.) */
+  onDragStart?: (session: DragSession) => void;
   /**
    * Haptic feedback for the grid's moments: lifting an item, it moving to another
    * slot, a drop that changed the order, a page turning during a drag, and

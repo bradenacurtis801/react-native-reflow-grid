@@ -1,3 +1,4 @@
+import type { DragSession } from '../drag';
 import { DragEngine, HOLD_MS, LONG_PRESS_MS, PAGE_DWELL_MS, PAGE_TURN_MS, SLOP, type DragHost, type DragView, type Offset } from '../dragEngine';
 import { HAPTIC_GAPS, type HapticEvent } from '../haptics';
 import { gridLayout, pagedLayout, type ReflowLayout } from '../layout';
@@ -69,7 +70,7 @@ function setup({ count = 12, layout, room = { width: 320, height: 300 }, offset 
     finger: [] as { x: number; y: number }[],
     grabs: [] as { x: number; y: number }[],
     reorders: [] as unknown[],
-    started: [] as (readonly string[])[],
+    started: [] as DragSession[],
     lifted: [] as string[],
     haptics: [] as HapticEvent[],
   };
@@ -103,7 +104,7 @@ function setup({ count = 12, layout, room = { width: 320, height: 300 }, offset 
     instant,
     web,
     onReorder: (result) => calls.reorders.push(result),
-    onDragStart: (keys) => calls.started.push(keys),
+    onDragStart: (session) => calls.started.push(session),
     onLift: (id) => calls.lifted.push(id),
     haptic: (event) => calls.haptics.push(event),
   };
@@ -125,7 +126,7 @@ describe('a finger', () => {
     const { drag, floating } = engine.getSnapshot();
     expect(drag?.dragged).toEqual(['4']);
     expect(floating).toBe(true);
-    expect(calls.started).toEqual([['4']]);
+    expect(calls.started).toEqual([{ origin: 'internal', items: [{ key: '4', types: ['text/plain'], local: 4 }] }]);
     expect(calls.lifted).toEqual(['a']);
     // It holds the item where the finger is on it: 50 across and down.
     expect(calls.grabs).toEqual([{ x: 50, y: 50 }]);
@@ -175,7 +176,15 @@ describe('a finger', () => {
     // The lifted item follows the finger.
     expect(calls.finger[calls.finger.length - 1]).toEqual(centre(7));
     engine.touchUp('a');
-    expect(calls.reorders).toEqual([{ keys: ['0', '1', '2', '3', '5', '6', '7', '4', '8', '9', '10', '11'], moved: ['4'], from: 4, to: 7 }]);
+    expect(calls.reorders).toEqual([
+      {
+        session: { origin: 'internal', items: [{ key: '4', types: ['text/plain'], local: 4 }] },
+        keys: ['0', '1', '2', '3', '5', '6', '7', '4', '8', '9', '10', '11'],
+        moved: ['4'],
+        from: 4,
+        to: 7,
+      },
+    ]);
     expect(engine.dragging).toBe(false);
     expect(engine.getSnapshot().floating).toBe(false);
   });

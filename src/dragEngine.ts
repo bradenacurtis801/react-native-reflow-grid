@@ -74,7 +74,7 @@ export interface DragView<T> {
   /** The scroll position of a page turn is worked out here, a frame at a time (the browser's own smooth scroll is switched off by a reduce-motion setting). */
   web: boolean;
   onReorder?(result: DragResult): void;
-  onDragStart?(keys: readonly string[]): void;
+  onDragStart?(session: DragSession): void;
   /** The finger with this id has lifted an item: the press it began is over. */
   onLift?(id: string): void;
   /** A moment for feedback (see `HapticEvent`); absent when there is none to give. */
@@ -236,7 +236,7 @@ export class DragEngine<T> {
     }
     press.active = true;
     this.view.onLift?.(press.id);
-    this.view.onDragStart?.(state.dragged);
+    this.view.onDragStart?.(state.session);
   }
 
   // A browser's drag and drop (see `webDrag.ts`).
