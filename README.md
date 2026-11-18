@@ -4,7 +4,7 @@ A grid for React Native where **items glide to their new places** when one is ad
 
 - **Windowed.** Off-screen items exist only as slots in the layout; just what's visible (plus a buffer) is mounted.
 - **Animated reflow.** Remove an item and it shrinks away while the rest spring into the gap. Change the layout (3 columns → 1, vertical → horizontal) and everything glides.
-- **Pluggable layouts.** A layout is just `(count, container) => { rects, size }`. `gridLayout` covers grids, lists and strips; write your own for masonry or anything else.
+- **Pluggable layouts.** A layout is just `(count, container) => { rects, size }`. `gridLayout` covers grids, lists and strips; write your own for any arrangement that depends only on the item count and the container's size (layouts that depend on item sizes, like masonry, are planned — see the roadmap).
 - **Reliable multi-touch.** Presses are decided by the grid, not by per-item `Pressable`, so a second finger's tap isn't dropped while another finger holds the responder.
 - Vertical, horizontal, or two-axis scrolling. iOS, Android and web.
 
@@ -90,7 +90,26 @@ npx expo run:ios   # or run:android — reanimated needs a dev build, not Expo G
 
 ## Roadmap
 
-- **Drag to reorder**, modeled on `UICollectionView`'s interactive movement: press and hold an item to lift it, drag it, and the others glide aside to make room; drop it and the new order is reported back (the grid stays controlled — you update `data`). Planned: auto-scroll near the edges, a drag handle as an alternative to long-press, and per-item opt-out (like `canMoveItemAt`).
+### Drag and drop
+
+Drag and drop will use each platform's own drag-and-drop API (UIKit's drag and drop on iOS, `DragEvent` on Android, HTML5 drag and drop on web), so items can carry typed payloads that other views and apps understand. It will feel like `UICollectionView`'s interactive movement: press and hold an item to lift it, drag it, the others glide aside to make room, drop it and the new order is reported back. The grid stays controlled — you update `data`.
+
+**Architecture**
+
+- **Core stays pure TypeScript** (layout, windowing, reflow animation, preview order, commit), so it keeps working without a dev build.
+- **Drivers.** A driver turns platform drag input into `{ phase, location, session }`; the core owns everything visual. Native drivers ship as an optional add-on, iOS first, then web, then Android. A JS-gesture driver may follow as a fallback for in-grid reorder where no native driver exists.
+- **Native delegates can't wait for JS.** The platform's drop callbacks must answer synchronously, so the grid pushes declarative data to native ahead of time (slot rects, payload descriptors, accepted types, a drop-intent policy) and receives asynchronous notifications back (`onDragHover`, `onDrop`, `onReorder`). Until `data` catches up after a drop, the grid keeps its own pending order.
+
+**Decisions to make before 1.0** (each would be a breaking change later)
+
+1. **Layouts see the data and are queried lazily.** `layout(data, container)` instead of `layout(count, container)`, so layouts can depend on item sizes (masonry, text cards). It returns a query object — `{ size, rectOf(i), indicesIn(window) }` — rather than an array of every rect, so only the visible window, the dragged item and the hover target are ever evaluated, and native drivers only receive those rects. `gridLayout` computes these analytically; data-aware layouts cache and recompute from the first changed index. A drag preview is the layout of the reordered data, hit-tested against the layout without the dragged item (with hysteresis) so it can't oscillate under the finger. A built-in `masonryLayout` will show the pattern.
+2. **A drag is a session of items, not a key.** `{ origin: 'internal' | 'external', items: [{ key?, types, local? }] }`: a drop may carry items that aren't in `data` (another app, another grid), and platform sessions already carry a list of items. v1 behavior caps a drag at one internal item, so multi-item stacking can follow without a breaking change.
+
+**Scope**
+
+- **v1:** reorder inside one grid on iOS through the platform drag session, with typed payloads. Drag lifecycle callbacks and a `dragging` flag in `renderItem`; a configurable long-press and drag-handle regions; auto-scroll near the edges; per-item opt-out (like `canMoveItemAt`).
+- **v1.x:** an `{ type: 'into', key }` drop intent with a dwell time (folders, combine), multi-item sessions, an external drop-zone API (trash, eject), web driver.
+- **Later:** Android driver, cross-grid and cross-app polish, paging.
 
 ## License
 

@@ -19,7 +19,9 @@ export interface ReflowResult {
 /**
  * A layout is a function from how many items there are to where each goes.
  * That is all `ReflowGrid` asks of one, so any arrangement works — a grid
- * (`gridLayout`), a masonry, a stack — by being written as one. It's called
+ * (`gridLayout`), a stack, a spiral — by being written as one. It sees
+ * only the count and the container, not the items, so what it places can't
+ * depend on their sizes. It's called
  * again whenever the count or the container changes, and the items glide to
  * their new places.
  */
