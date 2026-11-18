@@ -25,6 +25,8 @@ import { runOnJS } from 'react-native-worklets';
 import type { DragResult, Point } from './drag';
 import { SLOP, type Offset } from './dragEngine';
 import { intersects, type Rect, type ReflowLayout, type Region, type Size } from './layout';
+import { PageDots } from './PageDots';
+import { DOTS_HIT, type PageIndicatorOptions } from './pageIndicator';
 import { useDragReorder } from './useDragReorder';
 import { attachWebDrag } from './webDrag';
 
@@ -37,6 +39,8 @@ const LEAVE_SCALE = 0.5;
 const ENTER_SCALE = 0.6;
 /** Cells this far (pt) beyond the screen are kept mounted, so a scroll doesn't mount them at the edge. */
 const BUFFER = 300;
+/** The page dots sit this far (pt) in from the edge of the grid, where a scroll indicator would. */
+const DOTS_INSET = 6;
 /** A lifted item is this much bigger. */
 const LIFT_SCALE = 1.06;
 /** A dragged item's slot dims to this, to show where it will land. */
@@ -80,6 +84,11 @@ interface Pending {
   startY: number;
   /** It moved too far: a scroll, not a press. */
   moved: boolean;
+}
+
+/** The page a scroll position is on: the nearest whole one. */
+function pageOf(pages: { count: number; stride: number }, along: number): number {
+  return pages.count > 0 && pages.stride > 0 ? Math.min(Math.max(Math.round(along / pages.stride), 0), pages.count - 1) : 0;
 }
 
 function sameIndices(a: readonly number[] | undefined, b: readonly number[] | undefined): boolean {
@@ -132,6 +141,7 @@ export function ReflowGrid<T>({
   onReorder,
   canDrag,
   onDragStart,
+  pageIndicator = true,
   reduceMotion = ReduceMotion.System,
   style,
 }: {
@@ -186,6 +196,13 @@ export function ReflowGrid<T>({
    * @default ReduceMotion.System
    */
   reduceMotion?: ReduceMotion;
+  /**
+   * For a paged layout (`pagedLayout`): dots, one for each page and lit for the
+   * one on screen, shown where the scroll indicator along the pages would be,
+   * in place of it. Options style them. `false` shows no dots and leaves the
+   * scroll indicator. @default true
+   */
+  pageIndicator?: boolean | PageIndicatorOptions;
   style?: StyleProp<ViewStyle>;
 }) {
   const mainHorizontal = axis === 'horizontal';
@@ -274,8 +291,19 @@ export function ReflowGrid<T>({
   const indicesAt = (o: Offset): number[] | undefined =>
     placed ? placed.indicesIn(windowOf(o)) : undefined;
   // A scroll view reports its own axis: the outer (vertical) and, for `both`, the inner (horizontal).
+  // The page on screen, for the dots. What's drawn is worked out from the scroll offset on each render, so it
+  // can't disagree with where the grid is (an offset reset by a change of axis, say); this just brings the render.
+  const [, setPage] = useState(0);
+  // Where the scroll is, in pages, fractional mid-swipe: the dots follow it on the UI thread.
+  const pageProgress = useSharedValue(0);
   const track = (next: Offset) => {
     offset.current = next;
+    const pg = placed?.pages;
+    if (pg) {
+      const along = pg.direction === 'horizontal' ? next.x : next.y;
+      pageProgress.set(pg.stride > 0 ? along / pg.stride : 0);
+      setPage(pageOf(pg, along));
+    }
     if (!sameIndices(indicesAt(next), shown.current)) showMore((n) => n + 1);
   };
   const onScrollY = (e: NativeSyntheticEvent<NativeScrollEvent>) => track({ x: offset.current.x, y: e.nativeEvent.contentOffset.y });
@@ -537,6 +565,30 @@ export function ReflowGrid<T>({
         ))
       : null;
 
+  // Dots for the pages stand in for the scroll indicator along them, in the same place.
+  const dots = pages && pageIndicator !== false ? pages : undefined;
+  // A new layout or axis can leave the scroll somewhere no scroll event has reported: say where it is.
+  useEffect(() => {
+    if (pages && pages.stride > 0) pageProgress.set((pages.direction === 'horizontal' ? offset.current.x : offset.current.y) / pages.stride);
+  }, [pages?.direction, pages?.stride, pages?.count, axis]); // eslint-disable-line react-hooks/exhaustive-deps
+  const dotOptions = typeof pageIndicator === 'object' ? pageIndicator : {};
+  // The dots are drawn on a bigger touch area; the dots themselves stay where a scroll indicator would be.
+  const hit = dotOptions.scrub === false ? 0 : DOTS_HIT;
+  const dotsStyle: ViewStyle | undefined = dots
+    ? dots.direction === 'horizontal'
+      ? { position: 'absolute', left: 0, right: 0, bottom: crossEnd + DOTS_INSET - hit, alignItems: 'center' }
+      : { position: 'absolute', top: 0, bottom: 0, right: DOTS_INSET - hit, justifyContent: 'center' }
+    : undefined;
+  /** Scrubbing the dots: to a page, at once. */
+  const scrubTo = (page: number) => {
+    const pg = placed?.pages;
+    if (!pg) return;
+    const along = Math.min(Math.max(page, 0), pg.count - 1) * pg.stride;
+    const to = pg.direction === 'horizontal' ? { x: along, y: offset.current.y } : { x: offset.current.x, y: along };
+    scrollRef.current?.scrollTo({ ...to, animated: false });
+    track(to);
+  };
+
   // Two axes. On iOS one scroll view holds both: its content is wider and taller than its frame, so one drag moves it diagonally.
   // Android has no two-axis scroll view, so there a horizontal one nests inside the vertical (a drag then belongs to one axis).
   const both = axis === 'both';
@@ -599,13 +651,25 @@ export function ReflowGrid<T>({
         alwaysBounceVertical={!mainHorizontal}
         directionalLockEnabled={!both}
         // The indicator for the axis it scrolls along, inset as the content is so it sits clear of the header and footer.
-        showsHorizontalScrollIndicator={mainHorizontal || (both && !nested)}
-        showsVerticalScrollIndicator={!mainHorizontal}
+        showsHorizontalScrollIndicator={(mainHorizontal || (both && !nested)) && dots?.direction !== 'horizontal'}
+        showsVerticalScrollIndicator={!mainHorizontal && dots?.direction !== 'vertical'}
         scrollIndicatorInsets={mainHorizontal ? { left: outerInset.start, right: outerInset.end } : { top: outerInset.start, bottom: outerInset.end }}
       >
         {outerContent}
         {markers}
       </ScrollView>
+      {dots && (
+        <View pointerEvents="box-none" style={dotsStyle}>
+          <PageDots
+            count={dots.count}
+            current={pageOf(dots, dots.direction === 'horizontal' ? offset.current.x : offset.current.y)}
+            progress={pageProgress}
+            horizontal={dots.direction === 'horizontal'}
+            options={dotOptions}
+            onScrub={scrubTo}
+          />
+        </View>
+      )}
     </View>
   );
 }

@@ -111,6 +111,7 @@ export default function App() {
         layout={layout}
         onMounted={setMounted}
         onReorder={reorder}
+        pageIndicator={{ color: 'rgba(255,255,255,0.3)', activeColor: '#fff' }}
         reduceMotion={ReduceMotion.Never}
         renderItem={(t) => <TileView tile={t} />}
         touchRegions={touchRegions}

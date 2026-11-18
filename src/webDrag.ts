@@ -14,6 +14,11 @@ export type WebDragEngine = Pick<DragEngine<unknown>, 'osStart' | 'osMove' | 'os
  */
 export function attachWebDrag(el: HTMLElement, engine: WebDragEngine, cellNode: (key: string) => unknown): () => void {
   const onStart = (e: DragEvent) => {
+    // A drag that began on the page dots is theirs (scrubbing the pages), not the grid's.
+    if ((e.target as Element | null)?.closest?.('[data-reflow-scrub]')) {
+      e.preventDefault();
+      return;
+    }
     const hit = e.dataTransfer ? engine.osStart({ x: e.clientX, y: e.clientY }) : undefined;
     if (!hit || !e.dataTransfer) {
       e.preventDefault();
