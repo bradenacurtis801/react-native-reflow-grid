@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import {
   Platform,
   ScrollView,
@@ -371,6 +371,9 @@ export function ReflowGrid<T>({
         <ReflowCell
           key={key}
           id={key}
+          item={item}
+          index={index}
+          renderItem={renderItem}
           rect={rect}
           start={lastRects.current.get(key)}
           appear={settled.current && !knownKeys.current.has(key)}
@@ -380,18 +383,25 @@ export function ReflowGrid<T>({
           cellNodes={cellNodes}
           onGone={gone}
           reduceMotion={reduceMotion}
-        >
-          {renderItem(item, info)}
-        </ReflowCell>,
+        />,
       );
     }
     for (const l of leaving) {
       const rect = lastRects.current.get(l.key);
       if (!rect || !intersects(rect, w)) continue;
       cells.push(
-        <ReflowCell key={l.key} id={l.key} leaving start={rect} onGone={gone} cellNodes={cellNodes} reduceMotion={reduceMotion}>
-          {renderItem(l.item, { index: -1, size: { width: 0, height: 0 }, dragging: false })}
-        </ReflowCell>,
+        <ReflowCell
+          key={l.key}
+          id={l.key}
+          item={l.item}
+          index={-1}
+          renderItem={renderItem}
+          leaving
+          start={rect}
+          onGone={gone}
+          cellNodes={cellNodes}
+          reduceMotion={reduceMotion}
+        />,
       );
     }
   }
@@ -619,22 +629,12 @@ function PageMarker({ at, stride, horizontal }: { at: number; stride: number; ho
   );
 }
 
-/** One item's visuals: placed by animated values, so every move starts from where it is. */
-function ReflowCell({
-  id,
-  rect,
-  start,
-  leaving = false,
-  appear = false,
-  dragging = false,
-  floating = false,
-  finger,
-  cellNodes,
-  onGone,
-  reduceMotion,
-  children,
-}: {
+interface CellProps<T> {
   id: string;
+  item: T;
+  /** Its place in what's shown; -1 once it's leaving. */
+  index: number;
+  renderItem: (item: T, info: ItemInfo) => ReactNode;
   /** Where it goes — absent once it's leaving: it stays where it is. */
   rect?: Rect;
   /** Where it starts from when it's mounted: its last slot, so a move that was under way carries on. */
@@ -650,8 +650,68 @@ function ReflowCell({
   cellNodes: { current: Map<string, unknown> };
   onGone: (id: string) => void;
   reduceMotion: ReduceMotion;
-  children: ReactNode;
+}
+
+/** An item's visuals. Drawn again only when what it's drawn from changes, not whenever the grid renders. */
+function ItemContentImpl<T>({
+  item,
+  index,
+  width,
+  height,
+  dragging,
+  renderItem,
+}: {
+  item: T;
+  index: number;
+  width: number;
+  height: number;
+  dragging: boolean;
+  renderItem: (item: T, info: ItemInfo) => ReactNode;
 }) {
+  return <>{renderItem(item, { index, size: { width, height }, dragging })}</>;
+}
+const ItemContent = memo(ItemContentImpl) as typeof ItemContentImpl;
+
+const sameRect = (a?: Rect, b?: Rect) => a === b || (!!a && !!b && a.x === b.x && a.y === b.y && a.width === b.width && a.height === b.height);
+
+/**
+ * A cell is drawn again only when something it shows changes. `start` and
+ * `appear` are read once, when it mounts, so a change of them is no reason to.
+ */
+function sameCell(a: CellProps<unknown>, b: CellProps<unknown>): boolean {
+  return (
+    a.id === b.id &&
+    a.item === b.item &&
+    a.index === b.index &&
+    a.renderItem === b.renderItem &&
+    sameRect(a.rect, b.rect) &&
+    a.leaving === b.leaving &&
+    a.dragging === b.dragging &&
+    a.floating === b.floating &&
+    a.finger === b.finger &&
+    a.cellNodes === b.cellNodes &&
+    a.onGone === b.onGone &&
+    a.reduceMotion === b.reduceMotion
+  );
+}
+
+/** One item's visuals: placed by animated values, so every move starts from where it is. */
+function ReflowCellImpl<T>({
+  id,
+  item,
+  index,
+  renderItem,
+  rect,
+  start,
+  leaving = false,
+  appear = false,
+  dragging = false,
+  floating = false,
+  finger,
+  cellNodes,
+  onGone,
+  reduceMotion,
+}: CellProps<T>) {
   const from = start ?? rect;
   const move = useMemo(() => ({ ...MOVE, reduceMotion }), [reduceMotion]);
   const x = useSharedValue(from?.x ?? 0);
@@ -744,10 +804,18 @@ withSpring(rect.x, move),
       style={[styles.cell, style]}
       pointerEvents="none"
     >
-      {children}
+      <ItemContent
+        item={item}
+        index={index}
+        width={leaving ? 0 : (rect?.width ?? 0)}
+        height={leaving ? 0 : (rect?.height ?? 0)}
+        dragging={dragging}
+        renderItem={renderItem}
+      />
     </Animated.View>
   );
 }
+const ReflowCell = memo(ReflowCellImpl, sameCell as never) as typeof ReflowCellImpl;
 
 const styles = StyleSheet.create({
   cell: { position: 'absolute', left: 0, top: 0 },
