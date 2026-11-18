@@ -14,7 +14,7 @@ import {
 import Animated, { ReduceMotion, useAnimatedStyle, useSharedValue, withSpring, withTiming } from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
 
-import type { Rect, ReflowLayout, Size } from './layout';
+import { intersects, type Rect, type ReflowLayout, type Region, type Size } from './layout';
 
 /** How cells glide to a new place: a quick spring, so one set going while another is still moving carries on from where it is. */
 const MOVE = { damping: 26, stiffness: 320, mass: 0.9 };
@@ -62,27 +62,6 @@ interface Pending {
 interface Offset {
   x: number;
   y: number;
-}
-
-/** The part of the content on screen, with the buffer, in the content's own coordinates. */
-interface Window2 {
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-}
-
-function intersects(r: Rect, w: Window2): boolean {
-  return r.x < w.x1 && r.x + r.width > w.x0 && r.y < w.y1 && r.y + r.height > w.y0;
-}
-
-/** The items whose slots meet the window, in order. */
-function visibleIndices(rects: readonly Rect[], w: Window2): number[] {
-  const out: number[] = [];
-  rects.forEach((r, i) => {
-    if (intersects(r, w)) out.push(i);
-  });
-  return out;
 }
 
 function sameIndices(a: readonly number[] | undefined, b: readonly number[] | undefined): boolean {
@@ -142,7 +121,7 @@ export function ReflowGrid<T>({
   /** One item's pressable parts (see `TouchRegion`). Memoize it with the rest. */
   touchRegions?: (item: T, info: ItemInfo) => TouchRegion[];
   /** Memoize it: a new function lays everything out again. */
-  layout: ReflowLayout;
+  layout: ReflowLayout<T>;
   /**
    * The directions the grid scrolls. `'vertical'` and `'horizontal'` scroll
    * along one axis, and the layout's room is split across the other. `'both'`
@@ -219,8 +198,8 @@ export function ReflowGrid<T>({
   const roomWidth = viewport?.width;
   const roomHeight = viewport ? (mainHorizontal ? Math.max(viewport.height - crossStart - crossEnd, 0) : viewport.height) : undefined;
   const placed = useMemo(
-    () => (roomWidth != null && roomHeight != null ? layout(data.length, { width: roomWidth, height: roomHeight }) : undefined),
-    [layout, data.length, roomWidth, roomHeight],
+    () => (roomWidth != null && roomHeight != null ? layout(data, { width: roomWidth, height: roomHeight }) : undefined),
+    [layout, data, roomWidth, roomHeight],
   );
 
   // Scrolling: the offset is a ref, so a scroll doesn't render; a render comes
@@ -236,7 +215,7 @@ export function ReflowGrid<T>({
   // The content's own origin, in the scroll's terms: Android's padding moves it in by the start inset.
   const contentOf = (o: Offset): Offset => ({ x: o.x - (padded ? insetX.start : 0), y: o.y - (padded ? insetY.start : 0) });
   // What's on screen, with the buffer, in the content's coordinates.
-  const windowOf = (o: Offset): Window2 => {
+  const windowOf = (o: Offset): Region => {
     const c = contentOf(o);
     const v = viewport ?? { width: 0, height: 0 };
     return { x0: c.x - BUFFER, x1: c.x + v.width + BUFFER, y0: c.y - BUFFER, y1: c.y + v.height + BUFFER };
@@ -244,7 +223,7 @@ export function ReflowGrid<T>({
   const shown = useRef<number[] | undefined>(undefined);
   const [, showMore] = useState(0);
   const indicesAt = (o: Offset): number[] | undefined =>
-    placed ? visibleIndices(placed.rects, windowOf(o)) : undefined;
+    placed ? placed.indicesIn(windowOf(o)) : undefined;
   // A scroll view reports its own axis: the outer (vertical) and, for `both`, the inner (horizontal).
   const track = (next: Offset) => {
     offset.current = next;
@@ -257,8 +236,8 @@ export function ReflowGrid<T>({
   const indices = indicesAt(offset.current);
   shown.current = indices;
 
-  // Each present item's last known slot, kept after it's gone too: a leaving
-  // item leaves from there, and a newly mounted one starts from there.
+  // The last known slot of each item on screen, kept for a leaving one too: it
+  // leaves from there. An item off screen has none, so it moves with no animation.
   const lastRects = useRef(new Map<string, Rect>());
   // The items on screen, with where they go and their touch regions — what a touch is hit against.
   const slots = useRef<{ key: string; rect: Rect; regions: TouchRegion[] }[]>([]);
@@ -271,10 +250,16 @@ export function ReflowGrid<T>({
   useEffect(() => {
     knownKeys.current = new Set(data.map(keyExtractor));
   }, [data, keyExtractor]);
+  // After every render: the slots on screen now, and those of the items still leaving.
   useEffect(() => {
-    if (!placed) return;
-    data.forEach((item, index) => lastRects.current.set(keyExtractor(item, index), placed.rects[index]!));
-  }, [data, keyExtractor, placed]);
+    const next = new Map<string, Rect>();
+    if (placed && indices) for (const index of indices) next.set(keyExtractor(data[index]!, index), placed.rectOf(index));
+    for (const l of leaving) {
+      const rect = lastRects.current.get(l.key);
+      if (rect) next.set(l.key, rect);
+    }
+    lastRects.current = next;
+  });
 
   const gone = useCallback(
     (key: string) => {
@@ -326,7 +311,7 @@ export function ReflowGrid<T>({
     for (const index of indices ?? []) {
       const item = data[index]!;
       const key = keyExtractor(item, index);
-      const rect = placed.rects[index]!;
+      const rect = placed.rectOf(index);
       const info: ItemInfo = { index, size: { width: rect.width, height: rect.height } };
       slotList.push({ key, rect, regions: touchRegions?.(item, info) ?? [] });
       cells.push(

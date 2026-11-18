@@ -4,7 +4,7 @@ A grid for React Native where **items glide to their new places** when one is ad
 
 - **Windowed.** Off-screen items exist only as slots in the layout; just what's visible (plus a buffer) is mounted.
 - **Animated reflow.** Remove an item and it shrinks away while the rest spring into the gap. Change the layout (3 columns → 1, vertical → horizontal) and everything glides.
-- **Pluggable layouts.** A layout is just `(count, container) => { rects, size }`. `gridLayout` covers grids, lists and strips; write your own for any arrangement that depends only on the item count and the container's size (layouts that depend on item sizes, like masonry, are planned — see the roadmap).
+- **Pluggable layouts.** A layout is just `(data, container) => { size, rectOf, indicesIn }`: it sees the items, so it can depend on their sizes. `gridLayout` covers grids, lists and strips, `masonryLayout` columns of items of any height; write your own for anything else.
 - **Reliable multi-touch.** Presses are decided by the grid, not by per-item `Pressable`, so a second finger's tap isn't dropped while another finger holds the responder.
 - Vertical, horizontal, or two-axis scrolling. iOS, Android and web.
 
@@ -59,23 +59,49 @@ Memoize `layout` and `touchRegions`: a new function lays everything out again.
 | Prop | Description |
 | --- | --- |
 | `data`, `keyExtractor`, `renderItem` | As in a list. Keys decide who stays, enters and leaves. |
-| `layout` | A `ReflowLayout`. |
+| `layout` | A `ReflowLayout` (see below). Memoize it. |
 | `touchRegions` | Pressable parts of an item. |
 | `axis` | `'vertical'` (default), `'horizontal'`, or `'both'`. |
 | `startInset`, `endInset` | Space the scrolled content must clear at the start/end of the scroll axis (e.g. a header and a tab bar). Content scrolls beneath and rests clear. Default `0`. |
 | `crossStartInset`, `crossEndInset` | For horizontal grids: space rows clear at the top and bottom. |
+| `reduceMotion` | `ReduceMotion.System` (default) jumps animations to their end when the device's reduce-motion setting is on; `ReduceMotion.Never` always animates. |
 | `onMounted` | Called with how many cells are mounted after each change. |
+
+### `masonryLayout(options)`
+
+Columns of equal width, items of any height: each item goes under the shortest column so far.
+
+```ts
+import { masonryLayout } from 'react-native-reflow-grid';
+
+const layout = useMemo(
+  () => masonryLayout<Photo>({ columns: 2, gap: 8, heightOf: (photo, width) => width / photo.aspect }),
+  [],
+);
+```
+
+| Option | Description |
+| --- | --- |
+| `columns` | How many columns share the room's width. |
+| `gap` | A number, or `{ x, y }`. Default `0`. |
+| `heightOf` | `(item, width, index) => height`: an item's height, given the width its column gives it. |
 
 ### Custom layouts
 
-```ts
-import type { ReflowLayout } from 'react-native-reflow-grid';
+A layout is a function from the items and the container's size to a result that answers two questions, so only what's needed is worked out: where item `i` goes (`rectOf`), and which items meet a region of the content (`indicesIn`, called with what's on screen plus a buffer). `gridLayout` answers both from the index alone, with nothing built per item.
 
-const stack: ReflowLayout = (count, container) => ({
-  rects: Array.from({ length: count }, (_, i) => ({ x: 0, y: i * 60, width: container.width, height: 56 })),
-  size: { width: container.width, height: count * 60 },
-});
+```ts
+import { layoutFromRects, type ReflowLayout } from 'react-native-reflow-grid';
+
+// The simple way: build a rect for every item and let `layoutFromRects` answer the questions with a scan.
+const stack: ReflowLayout = (data, container) =>
+  layoutFromRects(
+    data.map((_, i) => ({ x: 0, y: i * 60, width: container.width, height: 56 })),
+    { width: container.width, height: data.length * 60 },
+  );
 ```
+
+Write `rectOf` and `indicesIn` yourself when you can work them out without a pass over every item, as `gridLayout` does.
 
 ## Example
 
@@ -102,7 +128,7 @@ Drag and drop will use each platform's own drag-and-drop API (UIKit's drag and d
 
 **Decisions to make before 1.0** (each would be a breaking change later)
 
-1. **Layouts see the data and are queried lazily.** `layout(data, container)` instead of `layout(count, container)`, so layouts can depend on item sizes (masonry, text cards). It returns a query object — `{ size, rectOf(i), indicesIn(window) }` — rather than an array of every rect, so only the visible window, the dragged item and the hover target are ever evaluated, and native drivers only receive those rects. `gridLayout` computes these analytically; data-aware layouts cache and recompute from the first changed index. A drag preview is the layout of the reordered data, hit-tested against the layout without the dragged item (with hysteresis) so it can't oscillate under the finger. A built-in `masonryLayout` will show the pattern.
+1. **Layouts see the data and are queried lazily.** *Done:* `layout(data, container)` returns `{ size, rectOf(i), indicesIn(region) }`, so layouts can depend on item sizes (`masonryLayout`), and only the visible region, the dragged item and the hover target need evaluating. `gridLayout` answers analytically; `masonryLayout` builds its rects in one pass over `data`, so recomputing from the first changed index is still to do. *To do with drag:* a preview is the layout of the reordered data, hit-tested against the layout without the dragged item (with hysteresis) so it can't oscillate under the finger, and native drivers receive only the rects they need.
 2. **A drag is a session of items, not a key.** `{ origin: 'internal' | 'external', items: [{ key?, types, local? }] }`: a drop may carry items that aren't in `data` (another app, another grid), and platform sessions already carry a list of items. v1 behavior caps a drag at one internal item, so multi-item stacking can follow without a breaking change.
 
 **Scope**

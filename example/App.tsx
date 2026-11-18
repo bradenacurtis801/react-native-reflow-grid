@@ -1,7 +1,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
 import { ReduceMotion } from 'react-native-reanimated';
-import { gridLayout, ReflowGrid, type ReflowLayout, type Size } from 'react-native-reflow-grid';
+import { gridLayout, layoutFromRects, ReflowGrid, type ReflowLayout, type Size } from 'react-native-reflow-grid';
 
 type Arrangement = 'auto' | 'grid' | 'list' | 'row' | 'rows' | 'fixed';
 
@@ -29,7 +29,8 @@ const ASPECT = 0.75;
  * Every card on screen at once: the column count whose cards come out biggest
  * while all the rows still fit the room (less what's pinned over it), centered.
  */
-const fitLayout: ReflowLayout = (count, room: Size) => {
+const fitLayout: ReflowLayout = (data, room: Size) => {
+  const count = data.length;
   // A margin each side, so a scrollbar's width can't push the content wider than what's shown.
   const width = Math.max(room.width - 2 * GAP, 0);
   const height = Math.max(room.height - TOP - BOTTOM, 0);
@@ -51,7 +52,7 @@ const fitLayout: ReflowLayout = (count, room: Size) => {
     height: cardHeight,
   }));
   const rows = Math.ceil(count / columns);
-  return { rects, size: { width, height: count === 0 ? 0 : rows * cardHeight + (rows - 1) * GAP } };
+  return layoutFromRects(rects, { width, height: count === 0 ? 0 : rows * cardHeight + (rows - 1) * GAP });
 };
 
 interface Tile {
@@ -89,10 +90,10 @@ export default function App() {
         return gridLayout({ flow: 'horizontal', lines: 1, gap: GAP, card: { aspect: 0.75 } });
       case 'rows':
         // Two rows, and two cards across the screen: each card's width is half the room's, so its aspect follows from the room.
-        return (count, room) => {
+        return (data, room) => {
           const width = (room.width - GAP) / 2;
           const height = (room.height - GAP) / 2;
-          return gridLayout({ flow: 'horizontal', lines: 2, gap: GAP, card: { aspect: width / height } })(count, room);
+          return gridLayout({ flow: 'horizontal', lines: 2, gap: GAP, card: { aspect: width / height } })(data, room);
         };
       // Fixed on both axes: five 300 × 240 columns are wider than the screen, so the grid scrolls both ways.
       case 'fixed':
