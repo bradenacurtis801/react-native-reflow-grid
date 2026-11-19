@@ -81,7 +81,8 @@ export interface TouchRegion {
 
 /** A finger that went down on a region and hasn't lifted yet. */
 interface Pending {
-  region: TouchRegion;
+  /** Absent when the finger went down off every region (or until the grid's place is known). */
+  region?: TouchRegion;
   startX: number;
   startY: number;
   /** It moved too far: a scroll, not a press. */
@@ -458,7 +459,7 @@ export function ReflowGrid<T>({
   // lifts still — a press — or it moves, or the touch is cancelled — nothing.
   // Positions are in the content's space: the viewport's, plus the scroll.
   const root = rootRef;
-  // Where the grid sits on screen, from its last layout: a touch is placed at once, not after an async measure that a quick tap can outrun.
+  // Where the grid sits on screen, from its last layout or touch: a touch is placed at once, not after an async measure that a quick tap can outrun.
   const origin = useRef<{ left: number; top: number } | undefined>(undefined);
   const pending = useRef(new Map<string, Pending>());
   // The region under a point (page coordinates), for a grid whose top-left sits at `left`, `top`.
@@ -486,14 +487,22 @@ export function ReflowGrid<T>({
     const downs = Array.from(changedTouches, (t) => ({ id: t.identifier, x: t.pageX, y: t.pageY }));
     const first = downs[0];
     if (first) engine.touchDown(first.id, { x: first.x, y: first.y });
+    for (const { id, x, y } of downs) pending.current.set(id, { startX: x, startY: y, moved: false });
+    // Hit against a place: for each finger still down, the region under where it went down.
     const place = (left: number, top: number) => {
-      for (const { id, x: pageX, y: pageY } of downs) {
-        const region = regionAt(pageX, pageY, left, top);
-        if (region) pending.current.set(id, { region, startX: pageX, startY: pageY, moved: false });
+      for (const { id } of downs) {
+        const p = pending.current.get(id);
+        if (p) p.region = regionAt(p.startX, p.startY, left, top);
       }
     };
+    // The cached place first, so a quick tap that lifts before the measure returns still presses. The grid can move without a
+    // layout (a parent lifted by a transform, say, as a keyboard dock does), so it's measured again on every touch and the hit
+    // redone against that; the drag reads the same place.
     if (origin.current) place(origin.current.left, origin.current.top);
-    else root.current?.measureInWindow(place);
+    root.current?.measureInWindow((left, top) => {
+      origin.current = { left, top };
+      place(left, top);
+    });
   };
   const onTouchMove = (e: GestureResponderEvent) => {
     for (const t of e.nativeEvent.changedTouches) {
@@ -514,7 +523,7 @@ export function ReflowGrid<T>({
       const p = pending.current.get(t.identifier);
       pending.current.delete(t.identifier);
       if (!p) continue;
-      if (!p.moved) p.region.onPress();
+      if (!p.moved) p.region?.onPress();
     }
   };
   const onTouchCancel = (e: GestureResponderEvent) => {
