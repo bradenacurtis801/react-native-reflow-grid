@@ -18,6 +18,16 @@ Built on `react-native-reanimated` v4 and `react-native-worklets`. Pure TypeScri
 | --- | --- |
 | ![Columns layout](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/col-layout.gif) | ![Rows layout](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/row-layout.gif) |
 
+Drag to reorder, across arrangements:
+
+| 3 columns | 1 column | Masonry |
+| --- | --- | --- |
+| ![Dragging in 3 columns](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/reflow-drag-3cols.gif) | ![Dragging in 1 column](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/reflow-drag-1col.gif) | ![Dragging in masonry](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/reflow-drag-masonry.gif) |
+
+| Vertical paging | Horizontal paging |
+| --- | --- |
+| ![Dragging across vertical pages](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/reflow-drag-VPage.gif) | ![Dragging across horizontal pages](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/reflow-drag-HPage.gif) |
+
 ## Install
 
 ```sh
