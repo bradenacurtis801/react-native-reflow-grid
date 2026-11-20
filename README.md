@@ -1,5 +1,8 @@
 # react-native-reflow-grid
 
+[![npm](https://img.shields.io/npm/v/react-native-reflow-grid)](https://www.npmjs.com/package/react-native-reflow-grid)
+[![license](https://img.shields.io/npm/l/react-native-reflow-grid)](LICENSE)
+
 A grid for React Native where **items glide to their new places** when one is added, removed, reordered, or the layout changes — in the spirit of a collection view's updates and Safari's tab overview — while **only the items on screen are mounted**.
 
 - **Windowed.** Off-screen items exist only as slots in the layout; just what's visible (plus a buffer) is mounted.
