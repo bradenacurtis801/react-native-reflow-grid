@@ -13,6 +13,7 @@ import {
 } from 'react-native';
 import Animated, {
   ReduceMotion,
+  useAnimatedScrollHandler,
   useAnimatedStyle,
   useReducedMotion,
   useSharedValue,
@@ -25,10 +26,12 @@ import { runOnJS } from 'react-native-worklets';
 import type { DragResult, DragSession, Point } from './drag';
 import { SLOP, type Offset } from './dragEngine';
 import { intersects, type Rect, type ReflowLayout, type Region, type Size } from './layout';
+import { now, perfLog, perfOn } from './perfLog';
 import { resolveHaptics, expoHaptics, type HapticsOption } from './haptics';
 import { loadExpoHaptics } from './loadExpoHaptics';
 import { PageDots } from './PageDots';
 import { DOTS_HIT, type PageIndicatorOptions } from './pageIndicator';
+import { SlotPool } from './slots';
 import { useDragReorder } from './useDragReorder';
 import { attachWebDrag } from './webDrag';
 
@@ -39,8 +42,27 @@ const LEAVE_MS = 180;
 const LEAVE_SCALE = 0.5;
 /** A cell added later starts this small and grows in. */
 const ENTER_SCALE = 0.6;
-/** Cells this far (pt) beyond the screen are kept mounted, so a scroll doesn't mount them at the edge. */
-const BUFFER = 300;
+/**
+ * Whether the cells are reused (`SlotPool`): an item that scrolls out leaves its cell to one that scrolls
+ * in, which takes it over where it stands, instead of the cell being unmounted and another mounted.
+ */
+const RECYCLE_CELLS = true;
+/**
+ * Whether a lifted item is placed on the UI thread: the finger in the grid's own frame, plus the scroll
+ * offset the UI thread has as it draws. Placed from the JS thread's offset instead (`false`), it's off by
+ * a frame of scroll whenever that offset isn't the one the scroll view is at, which hops it against the finger.
+ */
+const FOLLOW_ON_UI_THREAD = true;
+/** What scrolls: the scroll view whose offsets reach the UI thread first-hand, or the plain one. */
+const Scroller = (FOLLOW_ON_UI_THREAD ? Animated.ScrollView : ScrollView) as typeof ScrollView;
+/**
+ * Cells within this many screens (of the grid's own width and height) beyond the
+ * screen are kept mounted, so a scroll doesn't mount them at the edge: content
+ * has this long to load before it's seen, at any screen size.
+ */
+const BUFFER_SCREENS = 1;
+/** The least buffer (pt), for a small grid, and for before the grid's size is known. */
+const MIN_BUFFER = 300;
 /** The page dots sit this far (pt) in from the edge of the grid, where a scroll indicator would. */
 const DOTS_INSET = 6;
 /** A lifted item is this much bigger. */
@@ -53,12 +75,20 @@ interface Leaving<T> {
   item: T;
 }
 
-/** Where a lifted item follows the finger, in the content's space: the finger, and where it holds the item. */
+/**
+ * Where a lifted item follows the finger: the finger, and where it holds the item (`gx`, `gy`). The item's
+ * place in the content is `x + sx + ox - gx` (and likewise `y`): the finger in the grid's own frame (`x`), the scroll offset (`sx`)
+ * and what turns the two into the content's space (`ox`: the insets). Where the scroll isn't followed, `x` is the content's space and the rest are 0.
+ */
 interface Finger {
   x: SharedValue<number>;
   y: SharedValue<number>;
   gx: SharedValue<number>;
   gy: SharedValue<number>;
+  sx: SharedValue<number>;
+  sy: SharedValue<number>;
+  ox: SharedValue<number>;
+  oy: SharedValue<number>;
 }
 
 interface ItemInfo {
@@ -217,6 +247,7 @@ export function ReflowGrid<T>({
   pageIndicator?: boolean | PageIndicatorOptions;
   style?: StyleProp<ViewStyle>;
 }) {
+  const renderStart = now();
   const mainHorizontal = axis === 'horizontal';
   const move = useMemo(() => ({ ...MOVE, reduceMotion }), [reduceMotion]);
   // What gives feedback: the app's function, or `expo-haptics` if it has it (not on web), or nothing.
@@ -275,7 +306,20 @@ export function ReflowGrid<T>({
   const fingerY = useSharedValue(0);
   const grabX = useSharedValue(0);
   const grabY = useSharedValue(0);
-  const finger = useMemo<Finger>(() => ({ x: fingerX, y: fingerY, gx: grabX, gy: grabY }), [fingerX, fingerY, grabX, grabY]);
+  // The scroll offset as the UI thread has it, and the insets that turn the finger's place into the content's.
+  const scrollX = useSharedValue(0);
+  const scrollY = useSharedValue(0);
+  const shiftX = useSharedValue(0);
+  const shiftY = useSharedValue(0);
+  const innerOwnsX = useSharedValue(false);
+  const noScroll = useSharedValue(0);
+  const finger = useMemo<Finger>(
+    () =>
+      FOLLOW_ON_UI_THREAD
+        ? { x: fingerX, y: fingerY, gx: grabX, gy: grabY, sx: scrollX, sy: scrollY, ox: shiftX, oy: shiftY }
+        : { x: fingerX, y: fingerY, gx: grabX, gy: grabY, sx: noScroll, sy: noScroll, ox: noScroll, oy: noScroll },
+    [fingerX, fingerY, grabX, grabY, scrollX, scrollY, shiftX, shiftY, noScroll],
+  );
 
   // The layout's room: the viewport, less the cross-axis insets (a sideways grid's rows sit between them).
   const roomWidth = viewport?.width;
@@ -301,7 +345,9 @@ export function ReflowGrid<T>({
   const windowOf = (o: Offset): Region => {
     const c = contentOf(o);
     const v = viewport ?? { width: 0, height: 0 };
-    return { x0: c.x - BUFFER, x1: c.x + v.width + BUFFER, y0: c.y - BUFFER, y1: c.y + v.height + BUFFER };
+    const bx = Math.max(MIN_BUFFER, v.width * BUFFER_SCREENS);
+    const by = Math.max(MIN_BUFFER, v.height * BUFFER_SCREENS);
+    return { x0: c.x - bx, x1: c.x + v.width + bx, y0: c.y - by, y1: c.y + v.height + by };
   };
   const shown = useRef<number[] | undefined>(undefined);
   const [, showMore] = useState(0);
@@ -323,7 +369,14 @@ export function ReflowGrid<T>({
     }
     if (!sameIndices(indicesAt(next), shown.current)) showMore((n) => n + 1);
   };
-  const onScrollY = (e: NativeSyntheticEvent<NativeScrollEvent>) => track({ x: offset.current.x, y: e.nativeEvent.contentOffset.y });
+  const onScrollY = (e: NativeSyntheticEvent<NativeScrollEvent>) => {
+    // While dragging, the offset the finger was placed with (what the drag loop asked for) against the one the scroll view reports: a mismatch moves the lifted item against the finger.
+    if (perfOn() && snap.drag) {
+      const diff = e.nativeEvent.contentOffset.y - offset.current.y;
+      if (Math.abs(diff) > 1) perfLog(`scroll offset: reported=${e.nativeEvent.contentOffset.y.toFixed(1)} used=${offset.current.y.toFixed(1)} diff=${diff.toFixed(1)}`);
+    }
+    track({ x: offset.current.x, y: e.nativeEvent.contentOffset.y });
+  };
   // A sideways grid never scrolls across: its y stays 0 (the header's space is its frame's padding, not an offset).
   const onScrollX = (e: NativeSyntheticEvent<NativeScrollEvent>) =>
     track({ x: e.nativeEvent.contentOffset.x, y: mainHorizontal ? 0 : offset.current.y });
@@ -400,21 +453,55 @@ export function ReflowGrid<T>({
   // With both axes scrolling, the inner (horizontal) scroll view is as tall as its content.
   const innerStyle = useAnimatedStyle(() => ({ height: height.get() }));
 
-  // The cells on screen. A cell is keyed by its item, so one that goes from
-  // `data` to `leaving` is the same cell, and carries on from where it was.
+  // The cells on screen. Not recycled, a cell is keyed by its item, so one that goes from `data`
+  // to `leaving` is the same cell, and carries on from where it was. Recycled, it's keyed by its
+  // slot (`SlotPool`), and a leaving item carries on in the slot it was in.
   const cells: ReactNode[] = [];
   const slotList: { key: string; rect: Rect; regions: TouchRegion[] }[] = [];
+  const pool = useRef(new SlotPool());
+  // Each slot's cell as last drawn: one waiting to be reused is drawn again as it was, so React leaves it be.
+  const drawn = useRef(new Map<number, ReactNode>());
+  // What the places of the waiting cells depend on: when it changes, they're stale.
+  const shape = useRef({ layout, data, roomWidth, roomHeight });
+  // The keys still in `data`: an item that's gone has no cell waiting for it.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const liveKeys = useMemo(() => new Set(data.map(keyExtractor)), [data]);
   if (placed) {
     const w = windowOf(offset.current);
-    for (const index of indices ?? []) {
+    const wanted = (indices ?? []).map((index) => keyExtractor(items[index]!, index));
+    // A leaving item is drawn while it's on screen.
+    const leavingShown = leaving.filter((l) => {
+      const rect = lastRects.current.get(l.key);
+      return !!rect && intersects(rect, w);
+    });
+    let slotOfWanted: number[] | undefined;
+    let waiting: { slot: number; key: string }[] = [];
+    if (RECYCLE_CELLS) {
+      const was = shape.current;
+      const changed = was.layout !== layout || was.data !== data || was.roomWidth !== roomWidth || was.roomHeight !== roomHeight;
+      shape.current = { layout, data, roomWidth, roomHeight };
+      // While `data` is being taken in (the render that follows is the one drawn), nothing is let go of: a removed item's cell is about to be a leaving one.
+      const taking = seen !== data;
+      const assigned = pool.current.assign(
+        wanted,
+        new Set(leavingShown.map((l) => l.key)),
+        taking ? () => true : (key) => liveKeys.has(key),
+        changed,
+      );
+      slotOfWanted = assigned.slots;
+      waiting = assigned.stale;
+    }
+    const inUse = new Set<number>();
+    (indices ?? []).forEach((index, n) => {
       const item = items[index]!;
-      const key = keyExtractor(item, index);
+      const key = wanted[n]!;
       const rect = placed.rectOf(index);
       const info: ItemInfo = { index, size: { width: rect.width, height: rect.height }, dragging: draggedKeys.has(key) };
       slotList.push({ key, rect, regions: touchRegions?.(item, info) ?? [] });
-      cells.push(
+      const slot = slotOfWanted?.[n];
+      const cell = (
         <ReflowCell
-          key={key}
+          key={slot === undefined ? key : `slot:${slot}`}
           id={key}
           item={item}
           index={index}
@@ -428,15 +515,20 @@ export function ReflowGrid<T>({
           cellNodes={cellNodes}
           onGone={gone}
           reduceMotion={reduceMotion}
-        />,
+        />
       );
-    }
-    for (const l of leaving) {
-      const rect = lastRects.current.get(l.key);
-      if (!rect || !intersects(rect, w)) continue;
-      cells.push(
+      if (slot !== undefined) {
+        drawn.current.set(slot, cell);
+        inUse.add(slot);
+      }
+      cells.push(cell);
+    });
+    for (const l of leavingShown) {
+      const rect = lastRects.current.get(l.key)!;
+      const slot = RECYCLE_CELLS ? pool.current.slotFor(l.key) : undefined;
+      const cell = (
         <ReflowCell
-          key={l.key}
+          key={RECYCLE_CELLS ? (slot === undefined ? `leave:${l.key}` : `slot:${slot}`) : l.key}
           id={l.key}
           item={l.item}
           index={-1}
@@ -446,13 +538,40 @@ export function ReflowGrid<T>({
           onGone={gone}
           cellNodes={cellNodes}
           reduceMotion={reduceMotion}
-        />,
+        />
       );
+      if (slot !== undefined) {
+        drawn.current.set(slot, cell);
+        inUse.add(slot);
+      }
+      cells.push(cell);
     }
+    // Cells waiting to be reused stay mounted, drawn as they were.
+    for (const { slot } of waiting) {
+      const cell = drawn.current.get(slot);
+      if (cell) {
+        cells.push(cell);
+        inUse.add(slot);
+      }
+    }
+    for (const slot of [...drawn.current.keys()]) if (!inUse.has(slot)) drawn.current.delete(slot);
   }
   slots.current = slotList;
   const mountedCount = cells.length;
   useEffect(() => onMounted?.(mountedCount), [mountedCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  // A change in what's mounted, a new layout (a drag's preview reordered), or a slow render, and what the render and commit took (`perfLog`).
+  const loggedCount = useRef(0);
+  const loggedPlaced = useRef(placed);
+  useEffect(() => {
+    if (!perfOn()) return;
+    const took = now() - renderStart;
+    const relaid = loggedPlaced.current !== placed;
+    if (loggedCount.current !== mountedCount || relaid || took > 8) {
+      perfLog(`render ${took.toFixed(1)}ms cells ${loggedCount.current}→${mountedCount}${relaid ? ' re-laid-out' : ''}`);
+    }
+    loggedCount.current = mountedCount;
+    loggedPlaced.current = placed;
+  });
 
   // Each finger, by its id, from the grid's own touch events (which carry
   // every finger, not one responder's): down on a region, then either it
@@ -561,8 +680,20 @@ export function ReflowGrid<T>({
         grabX.set(grab.x);
         grabY.set(grab.y);
       }
-      fingerX.set(point.x);
-      fingerY.set(point.y);
+      if (FOLLOW_ON_UI_THREAD) {
+        // The finger in the grid's own frame: the item adds the scroll offset itself, on the UI thread, as it's drawn.
+        // A lift starts the UI thread's offset from the one known here (no scroll event has said where it rests).
+        if (grab) {
+          scrollX.set(offset.current.x);
+          scrollY.set(offset.current.y);
+        }
+        const c = contentOf(offset.current);
+        fingerX.set(point.x - c.x);
+        fingerY.set(point.y - c.y + crossStart);
+      } else {
+        fingerX.set(point.x);
+        fingerY.set(point.y);
+      }
     },
     instant,
     web: Platform.OS === 'web',
@@ -639,6 +770,43 @@ export function ReflowGrid<T>({
   const outerInset = mainHorizontal ? insetX : insetY;
   const onScrollBoth = (e: NativeSyntheticEvent<NativeScrollEvent>) =>
     track({ x: e.nativeEvent.contentOffset.x, y: e.nativeEvent.contentOffset.y });
+  // What the scroll views report, from the UI thread (`FOLLOW_ON_UI_THREAD`), as their scroll events were: by what the grid scrolls on.
+  const scrolled = (x: number, y: number) => {
+    if (mainHorizontal) {
+      track({ x, y: 0 });
+    } else if (nested || !both) {
+      if (perfOn() && snap.drag) {
+        const diff = y - offset.current.y;
+        if (Math.abs(diff) > 1) perfLog(`scroll offset: reported=${y.toFixed(1)} used=${offset.current.y.toFixed(1)} diff=${diff.toFixed(1)}`);
+      }
+      track({ x: offset.current.x, y });
+    } else {
+      track({ x, y });
+    }
+  };
+  const scrolledInner = (x: number) => track({ x, y: mainHorizontal ? 0 : offset.current.y });
+  // The handlers below outlive a render: they call the latest of these.
+  const scrolledRef = useRef(scrolled);
+  scrolledRef.current = scrolled;
+  const scrolledInnerRef = useRef(scrolledInner);
+  scrolledInnerRef.current = scrolledInner;
+  const reportScroll = useCallback((x: number, y: number) => scrolledRef.current(x, y), []);
+  const reportInner = useCallback((x: number) => scrolledInnerRef.current(x), []);
+  const onScrollUI = useAnimatedScrollHandler((e) => {
+    scrollY.set(e.contentOffset.y);
+    // Nested, the horizontal scroll view inside owns the horizontal offset.
+    if (!innerOwnsX.get()) scrollX.set(e.contentOffset.x);
+    runOnJS(reportScroll)(e.contentOffset.x, e.contentOffset.y);
+  });
+  const onScrollInnerUI = useAnimatedScrollHandler((e) => {
+    scrollX.set(e.contentOffset.x);
+    runOnJS(reportInner)(e.contentOffset.x);
+  });
+  useEffect(() => {
+    shiftX.set(-(padded ? insetX.start : 0));
+    shiftY.set(-(padded ? insetY.start : 0) - crossStart);
+    innerOwnsX.set(nested);
+  }, [padded, insetX.start, insetY.start, crossStart, nested, shiftX, shiftY, innerOwnsX]);
   const outerContent = nested ? (
     <Animated.ScrollView
       horizontal
@@ -646,7 +814,7 @@ export function ReflowGrid<T>({
       showsHorizontalScrollIndicator
       showsVerticalScrollIndicator={false}
       scrollEventThrottle={16}
-      onScroll={onScrollX}
+      onScroll={FOLLOW_ON_UI_THREAD ? (onScrollInnerUI as never) : onScrollX}
       style={innerStyle}
     >
       <Animated.View style={contentStyle}>{cells}</Animated.View>
@@ -667,7 +835,7 @@ export function ReflowGrid<T>({
       onTouchCancel={onTouchCancel}
       {...(Platform.OS === 'web' ? ({ onClick } as object) : null)}
     >
-      <ScrollView
+      <Scroller
         ref={scrollRef}
         key={axis}
         horizontal={mainHorizontal}
@@ -683,7 +851,7 @@ export function ReflowGrid<T>({
           // One view on two axes: its container is as wide as the content, not the frame, so there's something to pan across.
           both && !nested && { width: placed?.size.width },
         ]}
-        onScroll={mainHorizontal ? onScrollX : nested || !both ? onScrollY : onScrollBoth}
+        onScroll={FOLLOW_ON_UI_THREAD ? (onScrollUI as never) : mainHorizontal ? onScrollX : nested || !both ? onScrollY : onScrollBoth}
         scrollEventThrottle={16}
         // A lifted item follows the finger, which must not scroll the grid as well.
         scrollEnabled={!(drag && floating)}
@@ -700,7 +868,7 @@ export function ReflowGrid<T>({
       >
         {outerContent}
         {markers}
-      </ScrollView>
+      </Scroller>
       {dots && (
         <View pointerEvents="box-none" style={dotsStyle}>
           <PageDots
@@ -837,11 +1005,44 @@ function ReflowCellImpl<T>({
   const fy = finger?.y ?? noFinger;
   const gx = finger?.gx ?? noFinger;
   const gy = finger?.gy ?? noFinger;
+  const sx = finger?.sx ?? noFinger;
+  const sy = finger?.sy ?? noFinger;
+  const ox = finger?.ox ?? noFinger;
+  const oy = finger?.oy ?? noFinger;
   // The first placement isn't a move; only later ones are logged as such.
   const placed = useRef(false);
+  // The item this cell shows: it changes when the cell is reused for another (`SlotPool`).
+  const shownId = useRef(id);
 
   useEffect(() => {
     if (leaving || !rect) return;
+    // A lifted cell follows the finger at its own size: the slots it passes over aren't where it's going until it's dropped.
+    if (dragging && floating) {
+      perfLog(`lifted ${id}: slot is now ${rect.width.toFixed(0)}×${rect.height.toFixed(0)} at (${rect.x.toFixed(0)}, ${rect.y.toFixed(0)})`);
+      return;
+    }
+    if (shownId.current !== id) {
+      // Reused for another item: it's in its place at once, not gliding there from the other's.
+      shownId.current = id;
+      placed.current = true;
+      wasLifted.current = false;
+      x.set(rect.x);
+      y.set(rect.y);
+      w.set(rect.width);
+      h.set(rect.height);
+      lifted.set(0);
+      dim.set(dragging && !floating ? DRAGGED_OPACITY : 1);
+      if (appear) {
+        scale.set(ENTER_SCALE);
+        opacity.set(0);
+        scale.set(withSpring(1, move));
+        opacity.set(withTiming(1, { duration: LEAVE_MS, reduceMotion }));
+      } else {
+        scale.set(1);
+        opacity.set(1);
+      }
+      return;
+    }
     const first = !placed.current;
     placed.current = true;
     // Mounted where it already belongs: nothing to animate.
@@ -853,7 +1054,7 @@ withSpring(rect.x, move),
     y.set(withSpring(rect.y, move));
     w.set(withSpring(rect.width, move));
     h.set(withSpring(rect.height, move));
-  }, [leaving, rect?.x, rect?.y, rect?.width, rect?.height]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [id, leaving, rect?.x, rect?.y, rect?.width, rect?.height]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (leaving) {
@@ -878,16 +1079,23 @@ withSpring(rect.x, move),
       scale.set(withSpring(LIFT_SCALE, move));
     } else if (wasLifted.current) {
       wasLifted.current = false;
-      x.set(fx.get() - gx.get());
-      y.set(fy.get() - gy.get());
+      x.set(fx.get() + sx.get() + ox.get() - gx.get());
+      y.set(fy.get() + sy.get() + oy.get() - gy.get());
       lifted.set(0);
       if (rect) {
         x.set(withSpring(rect.x, move));
         y.set(withSpring(rect.y, move));
+        w.set(withSpring(rect.width, move));
+        h.set(withSpring(rect.height, move));
       }
       scale.set(withSpring(1, move));
     }
   }, [dragging, floating]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // What the item is drawn at: its slot's size, but a lifted one keeps the size it was lifted at.
+  const liftedSize = useRef<Size | undefined>(undefined);
+  if (dragging && floating && rect) liftedSize.current ??= { width: rect.width, height: rect.height };
+  else liftedSize.current = undefined;
 
   const style = useAnimatedStyle(() => {
     const up = lifted.get() === 1;
@@ -897,8 +1105,8 @@ withSpring(rect.x, move),
       opacity: opacity.get() * dim.get(),
       zIndex: up ? 100 : 0,
       transform: [
-        { translateX: up ? fx.get() - gx.get() : x.get() },
-        { translateY: up ? fy.get() - gy.get() : y.get() },
+        { translateX: up ? fx.get() + sx.get() + ox.get() - gx.get() : x.get() },
+        { translateY: up ? fy.get() + sy.get() + oy.get() - gy.get() : y.get() },
         { scale: scale.get() },
       ],
     };
@@ -916,8 +1124,8 @@ withSpring(rect.x, move),
       <ItemContent
         item={item}
         index={index}
-        width={leaving ? 0 : (rect?.width ?? 0)}
-        height={leaving ? 0 : (rect?.height ?? 0)}
+        width={leaving ? 0 : (liftedSize.current?.width ?? rect?.width ?? 0)}
+        height={leaving ? 0 : (liftedSize.current?.height ?? rect?.height ?? 0)}
         dragging={dragging}
         renderItem={renderItem}
       />

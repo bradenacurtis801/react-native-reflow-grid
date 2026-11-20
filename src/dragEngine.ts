@@ -1,6 +1,7 @@
 import { beginDrag, edgeVelocity, endDrag, slotAt, updateDrag, type DragResult, type DragSession, type DragState, type Point } from './drag';
 import { HAPTIC_GAPS, type HapticEvent } from './haptics';
 import type { ReflowResult, Size } from './layout';
+import { now, perfLog, perfOn } from './perfLog';
 
 /** A scroll position, in the scroll view's terms (what `contentOffset` reports). */
 export interface Offset {
@@ -308,6 +309,12 @@ export class DragEngine<T> {
     if (!state || !this.base) return;
     const p = { x: page.x, y: page.y, at: this.host.now(), touch };
     this.pointer = p;
+    if (perfOn()) {
+      // A long gap between moves: the thread was busy, and the lifted item stood still while the finger didn't.
+      const at = now();
+      if (this.lastMove && at - this.lastMove > 40) perfLog(`pointer move gap=${(at - this.lastMove).toFixed(0)}ms`);
+      this.lastMove = at;
+    }
     this.retarget(state, this.base, p);
     const scroll = this.scroll;
     if (scroll.raf === undefined) {
@@ -327,6 +334,10 @@ export class DragEngine<T> {
     // The content may have scrolled under a still finger.
     this.view.setFinger(point);
     const next = updateDrag(state, base, point);
+    if (next !== state && perfOn()) {
+      const o = this.view.offset();
+      perfLog(`reflow: finger content=(${point.x.toFixed(0)}, ${point.y.toFixed(0)}) scroll offset=(${o.x.toFixed(0)}, ${o.y.toFixed(0)})`);
+    }
     if (next !== state) {
       this.set({ drag: next });
       this.haptic('move');
@@ -395,7 +406,23 @@ export class DragEngine<T> {
     return turn.horizontal ? { x: along, y: now.y } : { x: now.x, y: along };
   }
 
+  /** The time of the last frame, for the gap between them (`perfLog`). */
+  private lastFrame = 0;
+  /** The time of the last move of the pointer, for the gap between them (`perfLog`). */
+  private lastMove = 0;
+
   private frame(time: number) {
+    if (!perfOn()) return this.step(time);
+    const start = now();
+    const gap = this.lastFrame && time - this.lastFrame < 1000 ? time - this.lastFrame : 0;
+    this.lastFrame = time;
+    this.step(time);
+    const work = now() - start;
+    // Only a slow one: a frame that took long to start (the thread was busy), or long to do.
+    if (gap > 24 || work > 8) perfLog(`drag frame gap=${gap.toFixed(0)}ms work=${work.toFixed(1)}ms`);
+  }
+
+  private step(time: number) {
     const scroll = this.scroll;
     scroll.raf = undefined;
     const turn = scroll.turn;
