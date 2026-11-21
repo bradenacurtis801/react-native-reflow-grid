@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { gridLayout, ReflowGrid } from 'react-native-reflow-grid';
 import { VIDEOS } from './data';
@@ -20,7 +20,7 @@ const clips = (from: number, count: number): Clip[] => Array.from({ length: coun
  * cell count is the number of live players: scroll and watch players come and
  * go with the cells. A tap pauses or plays one.
  */
-export default function VideosTab({ onMounted }: TabProps) {
+function VideosTab({ onMounted }: TabProps) {
   const [items, setItems] = useState(() => clips(1, 24));
   const [columns, setColumns] = useState(2);
   const [autoplay, setAutoplay] = useState(true);
@@ -49,6 +49,21 @@ export default function VideosTab({ onMounted }: TabProps) {
     setPlayback('videos:', !autoplay);
     setAutoplay(!autoplay);
   };
+  // Stable, so a card is drawn again only when its own clip or place changes, not whenever the tab renders.
+  const renderItem = useCallback(
+    (c: Clip) => (
+      <View style={styles.card}>
+        <VideoCell id={`videos:${c.id}`} source={VIDEOS[c.id % VIDEOS.length]!} autoplay={autoplay} />
+        <View style={styles.label}>
+          <Text style={styles.labelText}>Clip {c.id}</Text>
+        </View>
+        <View style={styles.remove}>
+          <Text style={styles.removeMark}>✕</Text>
+        </View>
+      </View>
+    ),
+    [autoplay],
+  );
 
   return (
     <View style={styles.root}>
@@ -67,17 +82,7 @@ export default function VideosTab({ onMounted }: TabProps) {
         swipeDirections={['left']}
         onSwipe={(c) => remove(c.id)}
         touchRegions={touchRegions}
-        renderItem={(c) => (
-          <View style={styles.card}>
-            <VideoCell id={`videos:${c.id}`} source={VIDEOS[c.id % VIDEOS.length]!} autoplay={autoplay} />
-            <View style={styles.label}>
-              <Text style={styles.labelText}>Clip {c.id}</Text>
-            </View>
-            <View style={styles.remove}>
-              <Text style={styles.removeMark}>✕</Text>
-            </View>
-          </View>
-        )}
+        renderItem={renderItem}
       />
       <View style={controls.top} pointerEvents="box-none">
         <Button label="2 cols" on={columns === 2} onPress={() => setColumns(2)} />
@@ -105,3 +110,6 @@ const styles = StyleSheet.create({
   remove: { position: 'absolute', top: 6, right: 6, width: 24, height: 24, borderRadius: 12, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(0,0,0,0.45)' },
   removeMark: { color: '#fff', fontSize: 12, fontWeight: '700' },
 });
+
+/** Memoized: the meter in `App` re-renders on every change in mounted cells, and that mustn't reach the cards. */
+export default memo(VideosTab);

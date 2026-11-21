@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { memo, useCallback, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { masonryLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
 import { rand } from './data';
@@ -20,7 +20,7 @@ const photos = (from: number, count: number): Photo[] =>
   Array.from({ length: count }, (_, i) => ({ id: from + i, ratio: 0.7 + rand(from + i) * 0.9, liked: false }));
 
 /** Remote images of different shapes in two columns: each cell's height follows from its photo. */
-export default function PhotosTab({ onMounted }: TabProps) {
+function PhotosTab({ onMounted }: TabProps) {
   const [items, setItems] = useState(() => photos(1, 60));
   const next = useRef(61);
 
@@ -44,6 +44,24 @@ export default function PhotosTab({ onMounted }: TabProps) {
     setItems((all) => [...all, ...photos(next.current, count)]);
     next.current += count;
   };
+  // Stable, so a card is drawn again only when its own photo or place changes, not whenever the tab renders.
+  const renderItem = useCallback(
+    (p: Photo, { size }: { size: { width: number; height: number } }) => (
+      <View style={styles.card}>
+        <Photo seed={p.id} width={size.width * 2} height={size.height * 2} style={StyleSheet.absoluteFill} />
+        <View style={styles.caption}>
+          <Text style={styles.captionText}>Photo {p.id}</Text>
+        </View>
+        <View style={[styles.badge, styles.left]}>
+          <Text style={styles.mark}>✕</Text>
+        </View>
+        <View style={[styles.badge, styles.right]}>
+          <Text style={[styles.mark, p.liked && styles.liked]}>{p.liked ? '♥' : '♡'}</Text>
+        </View>
+      </View>
+    ),
+    [],
+  );
 
   return (
     <View style={styles.root}>
@@ -60,20 +78,7 @@ export default function PhotosTab({ onMounted }: TabProps) {
         onReorder={reorder}
         onSwipe={(p) => remove(p.id)}
         touchRegions={touchRegions}
-        renderItem={(p, { size }) => (
-          <View style={styles.card}>
-            <Photo seed={p.id} width={size.width * 2} height={size.height * 2} style={StyleSheet.absoluteFill} />
-            <View style={styles.caption}>
-              <Text style={styles.captionText}>Photo {p.id}</Text>
-            </View>
-            <View style={[styles.badge, styles.left]}>
-              <Text style={styles.mark}>✕</Text>
-            </View>
-            <View style={[styles.badge, styles.right]}>
-              <Text style={[styles.mark, p.liked && styles.liked]}>{p.liked ? '♥' : '♡'}</Text>
-            </View>
-          </View>
-        )}
+        renderItem={renderItem}
       />
       <View style={controls.bottom} pointerEvents="box-none">
         <Text style={controls.count}>{items.length} photos</Text>
@@ -97,3 +102,6 @@ const styles = StyleSheet.create({
   mark: { color: '#fff', fontSize: 14, fontWeight: '700' },
   liked: { color: '#e2475a' },
 });
+
+/** Memoized: the meter in `App` re-renders on every change in mounted cells, and that mustn't reach the cards. */
+export default memo(PhotosTab);
