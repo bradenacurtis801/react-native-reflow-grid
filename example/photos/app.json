@@ -1,0 +1,12 @@
+{
+  "expo": {
+    "name": "Reflow Grid Photos",
+    "slug": "reflow-grid-photos",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": { "bundleIdentifier": "dev.reflowgrid.photos" },
+    "android": { "package": "dev.reflowgrid.photos" },
+    "plugins": ["expo-video", "expo-image"]
+  }
+}

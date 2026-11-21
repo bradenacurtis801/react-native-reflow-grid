@@ -31,7 +31,7 @@ Drag to reorder, across arrangements:
 | --- | --- |
 | ![Dragging across vertical pages](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/reflow-drag-VPage.gif) | ![Dragging across horizontal pages](https://raw.githubusercontent.com/bradenacurtis801/react-native-reflow-grid/main/demo/reflow-drag-HPage.gif) |
 
-With real content: remote photos in a masonry grid, and a grid of playing videos.
+With real content, in the [photos example](example/photos): remote photos in a masonry grid, and a grid of playing videos.
 
 | Photos | Videos |
 | --- | --- |
@@ -152,12 +152,15 @@ const stack: ReflowLayout = (data, container) =>
 
 Write `rectOf` and `indicesIn` yourself when you can work them out without a pass over every item, as `gridLayout` does.
 
-## Example
+## Examples
 
-A runnable Expo app in [`example/`](example): switch between 3 columns, a list, masonry, one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it, holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
+Two small Expo apps in [`example/`](example), each on its own:
+
+- [`example/tiles`](example/tiles): the grid itself. Switch between 3 columns, a list, masonry, one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it, holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
+- [`example/photos`](example/photos): real content. Remote photos in a masonry grid and a grid of playing videos (it adds `expo-image` and `expo-video`), with like and remove as `touchRegions`, and a meter of the JS and UI frame rates and the cells mounted.
 
 ```sh
-cd example
+cd example/tiles   # or example/photos
 npm install
 npx expo install --fix
 npx expo run:ios   # or run:android — reanimated needs a dev build, not Expo Go

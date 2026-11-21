@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "Reflow Grid Tiles",
+    "slug": "reflow-grid-tiles",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": { "bundleIdentifier": "dev.reflowgrid.tiles" },
+    "android": { "package": "dev.reflowgrid.tiles" }
+  }
+}
