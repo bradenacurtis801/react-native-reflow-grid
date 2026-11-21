@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useAnimatedScrollHandler, useSharedValue } from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
 
-import type { Offset } from './dragEngine';
-import type { ReflowResult, Region, Size } from './layout';
+import type { Offset } from '../drag/dragEngine';
+import type { ReflowResult, Region, Size } from '../layout';
 import { pageOf } from './pageIndicator';
-import { perfLog, perfOn } from './perfLog';
+import { perfLog, perfOn } from '../support/perfLog';
 
 /**
  * Cells within this many screens (of the grid's own width and height) beyond the

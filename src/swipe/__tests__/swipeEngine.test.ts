@@ -1,4 +1,4 @@
-import type { Rect } from '../layout';
+import type { Rect } from '../../layout';
 import { SWIPE_HOLD_MS, type SwipeDirection } from '../swipe';
 import { SwipeEngine, type SwipeHost, type SwipeTarget, type SwipeView } from '../swipeEngine';
 

@@ -2,28 +2,28 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { ReduceMotion, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from 'react-native-reanimated';
 
-import { resolveHaptics, expoHaptics } from './haptics';
+import { resolveHaptics, expoHaptics } from './support/haptics';
 import type { Size } from './layout';
-import { useLeaving } from './leaving';
-import { loadExpoHaptics } from './loadExpoHaptics';
-import { MOVE } from './motion';
-import { now, perfLog, perfOn } from './perfLog';
-import { swipeAllowed } from './swipe';
+import { useLeaving } from './cells/leaving';
+import { loadExpoHaptics } from './support/loadExpoHaptics';
+import { MOVE } from './cells/motion';
+import { now, perfLog, perfOn } from './support/perfLog';
+import { swipeAllowed } from './swipe/swipe';
 import type { Finger, ReflowGridProps, Slot } from './types';
-import { useCells } from './useCells';
-import { useDragReorder } from './useDragReorder';
-import { useGridTouch } from './useGridTouch';
-import { usePaging } from './usePaging';
-import { useScroll } from './useScroll';
-import { useSwipeToRemove } from './useSwipeToRemove';
-import { attachWebDrag } from './webDrag';
+import { useCells } from './cells/useCells';
+import { useDragReorder } from './drag/useDragReorder';
+import { useGridTouch } from './touch/useGridTouch';
+import { usePaging } from './scroll/usePaging';
+import { useScroll } from './scroll/useScroll';
+import { useSwipeToRemove } from './swipe/useSwipeToRemove';
+import { attachWebDrag } from './drag/webDrag';
 
 /** What scrolls: a scroll view whose offsets reach the UI thread first-hand (`useAnimatedScrollHandler`), so a lifted item can be placed by them. */
 const Scroller = Animated.ScrollView as unknown as typeof ScrollView;
 
 /**
  * Items laid out by `layout` — a grid, a list, a strip, anything a layout
- * function can describe (`./layout.ts`) — in a scroll view the grid owns, so
+ * function can describe (`./layout`) — in a scroll view the grid owns, so
  * it knows what's on screen. Only the items on screen (and a buffer either
  * side) are mounted; the rest exist only as their slots in the layout. Take
  * an item out of `data` and it shrinks away while each item after it glides

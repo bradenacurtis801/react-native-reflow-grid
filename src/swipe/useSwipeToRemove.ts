@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState } from 'react';
 import { Easing, withSpring, withTiming, type ReduceMotion, type SharedValue } from 'react-native-reanimated';
 
-import { now, perfLog } from './perfLog';
+import { now, perfLog } from '../support/perfLog';
 import { SwipeEngine, type SwipeView } from './swipeEngine';
 
 /**

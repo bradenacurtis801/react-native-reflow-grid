@@ -1,7 +1,7 @@
 import { beginDrag, edgeVelocity, endDrag, slotAt, updateDrag, type DragResult, type DragSession, type DragState, type Point } from './drag';
-import { HAPTIC_GAPS, type HapticEvent } from './haptics';
-import type { ReflowResult, Size } from './layout';
-import { now, perfLog, perfOn } from './perfLog';
+import { HAPTIC_GAPS, type HapticEvent } from '../support/haptics';
+import type { ReflowResult, Size } from '../layout';
+import { now, perfLog, perfOn } from '../support/perfLog';
 
 /** A scroll position, in the scroll view's terms (what `contentOffset` reports). */
 export interface Offset {

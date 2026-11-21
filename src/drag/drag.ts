@@ -1,4 +1,4 @@
-import type { Region, ReflowResult } from './layout';
+import type { Region, ReflowResult } from '../layout';
 
 /** A point in the content's own coordinates. */
 export interface Point {

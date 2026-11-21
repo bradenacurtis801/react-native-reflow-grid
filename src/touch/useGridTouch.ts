@@ -1,10 +1,10 @@
 import { useRef, type MutableRefObject, type RefObject } from 'react';
 import type { GestureResponderEvent, View } from 'react-native';
 
-import type { Point } from './drag';
-import { SLOP, type DragEngine, type Offset } from './dragEngine';
-import type { SwipeEngine } from './swipeEngine';
-import type { Slot, TouchRegion } from './types';
+import type { Point } from '../drag/drag';
+import { SLOP, type DragEngine, type Offset } from '../drag/dragEngine';
+import type { SwipeEngine } from '../swipe/swipeEngine';
+import type { Slot, TouchRegion } from '../types';
 
 /** A finger that went down on a region and hasn't lifted yet. */
 interface Pending {

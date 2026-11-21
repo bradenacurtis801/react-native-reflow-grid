@@ -1,6 +1,6 @@
-import type { Point } from './drag';
-import type { Offset } from './dragEngine';
-import type { Rect, Size } from './layout';
+import type { Point } from '../drag/drag';
+import type { Offset } from '../drag/dragEngine';
+import type { Rect, Size } from '../layout';
 import {
   classifyMove,
   exitDuration,

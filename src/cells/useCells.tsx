@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, type Dispatch, type MutableRefObject, type ReactNode, type SetStateAction } from 'react';
 import type { ReduceMotion, SharedValue } from 'react-native-reanimated';
 
-import { intersects, type Rect, type ReflowLayout, type ReflowResult, type Region } from './layout';
+import { intersects, type Rect, type ReflowLayout, type ReflowResult, type Region } from '../layout';
 import type { Leaving } from './leaving';
 import { ReflowCell } from './ReflowCell';
 import { SlotPool } from './slots';
-import type { SwipeEngine } from './swipeEngine';
-import type { Finger, ItemInfo, ItemRenderInfo, Slot, TouchRegion } from './types';
+import type { SwipeEngine } from '../swipe/swipeEngine';
+import type { Finger, ItemInfo, ItemRenderInfo, Slot, TouchRegion } from '../types';
 
 interface CellsInput<T> {
   data: readonly T[];

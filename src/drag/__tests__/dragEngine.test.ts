@@ -1,7 +1,7 @@
 import type { DragSession } from '../drag';
 import { DragEngine, HOLD_MS, LONG_PRESS_MS, PAGE_DWELL_MS, PAGE_TURN_MS, SLOP, type DragHost, type DragView, type Offset } from '../dragEngine';
-import { HAPTIC_GAPS, type HapticEvent } from '../haptics';
-import { gridLayout, pagedLayout, type ReflowLayout } from '../layout';
+import { HAPTIC_GAPS, type HapticEvent } from '../../support/haptics';
+import { gridLayout, pagedLayout, type ReflowLayout } from '../../layout';
 
 /** A clock the test turns by hand: timers and frames run when it's advanced. */
 function fakeHost() {

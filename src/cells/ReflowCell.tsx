@@ -11,11 +11,11 @@ import Animated, {
 } from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
 
-import type { Rect, Size } from './layout';
+import type { Rect, Size } from '../layout';
 import { DRAGGED_OPACITY, ENTER_SCALE, LEAVE_MS, LEAVE_SCALE, LIFT_SCALE, MOVE } from './motion';
-import { perfLog } from './perfLog';
-import { SWIPE_EXIT_MS, type SwipeDirection } from './swipe';
-import type { Finger, ItemRenderInfo } from './types';
+import { perfLog } from '../support/perfLog';
+import { SWIPE_EXIT_MS, type SwipeDirection } from '../swipe/swipe';
+import type { Finger, ItemRenderInfo } from '../types';
 
 export interface CellProps<T> {
   id: string;

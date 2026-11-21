@@ -1,11 +1,11 @@
 import type { ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import type { ReduceMotion, SharedValue } from 'react-native-reanimated';
-import type { DragResult, DragSession } from './drag';
-import type { HapticsOption } from './haptics';
+import type { DragResult, DragSession } from './drag/drag';
+import type { HapticsOption } from './support/haptics';
 import type { Rect, ReflowLayout, Size } from './layout';
-import type { PageIndicatorOptions } from './pageIndicator';
-import type { SwipeDirection } from './swipe';
+import type { PageIndicatorOptions } from './scroll/pageIndicator';
+import type { SwipeDirection } from './swipe/swipe';
 
 export interface ItemInfo {
   index: number;

@@ -1,4 +1,4 @@
-import { SLOP } from '../dragEngine';
+import { SLOP } from '../../drag/dragEngine';
 import { classifyMove, exitDuration, exitTarget, limitOffset, moveVelocity, startVelocity, swipeAllowed, swipeDirection, swipeOutcome } from '../swipe';
 
 describe('classifyMove', () => {

@@ -203,7 +203,7 @@ interface DragSession {
 - **Pages.** In a `pagedLayout`, an item held at an edge for 0.7 s turns the page, and must be held again for the next. A target is looked for among the slots of the page the pointer is on. Pages are dense, so dragging can't make a page with a gap in it or an empty one; dropping on the page after the last puts the item at the end.
 - **Haptics.** With [`expo-haptics`](https://docs.expo.dev/versions/latest/sdk/haptics/) installed the grid taps as an item is lifted, moves, and drops (see the `haptics` prop).
 
-The logic is plain TypeScript and tested: `src/drag.ts` (the target and the preview order) and `src/dragEngine.ts` (the engine that follows the pointer, scrolls and turns pages, and reports the drop). Input comes from adapters, so another can be added.
+The logic is plain TypeScript and tested: `src/drag/drag.ts` (the target and the preview order) and `src/drag/dragEngine.ts` (the engine that follows the pointer, scrolls and turns pages, and reports the drop). Input comes from adapters, so another can be added.
 
 ## Swipe to remove
 
@@ -234,7 +234,7 @@ Pass `onSwipe` and an item can be slid away with a finger, as a tab is in Safari
 - **Let go.** Past two fifths of the item's size, or flicked fast the way it's going, it's swiped away: `onSwipe` is called, and the item (once out of `data`) carries on that way and fades while the others glide into its place. Short of that it springs back. Return `false` from `onSwipe` to keep the item; it springs back too if it's still in `data` half a second later.
 - **Buttons stay.** A ✕ drawn in the card and pressed through `touchRegions` still works and travels with the card as it's swiped, as in Safari. A finger that has moved across the card never presses.
 
-*Swiping is new, and so far has only been checked by tests of its logic (`src/swipe.ts`), not on a device.*
+*Swiping is new, and so far has only been checked by tests of its logic and engine (`src/swipe/`), not on a device.*
 
 ## Roadmap
 

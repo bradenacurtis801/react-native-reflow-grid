@@ -1,4 +1,4 @@
-import { SLOP } from './dragEngine';
+import { SLOP } from '../drag/dragEngine';
 
 /** The way a swiped item went: across a vertical grid it's left or right, across a horizontal one up or down. */
 export type SwipeDirection = 'left' | 'right' | 'up' | 'down';

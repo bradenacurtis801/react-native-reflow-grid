@@ -2,8 +2,8 @@ import { useEffect, type MutableRefObject, type RefObject } from 'react';
 import { Platform, View, type ScrollView, type ViewStyle } from 'react-native';
 import type { SharedValue } from 'react-native-reanimated';
 
-import type { DragEngine, Offset } from './dragEngine';
-import type { ReflowResult, Size } from './layout';
+import type { DragEngine, Offset } from '../drag/dragEngine';
+import type { ReflowResult, Size } from '../layout';
 import { PageDots } from './PageDots';
 import { DOTS_HIT, pageOf, type PageIndicatorOptions } from './pageIndicator';
 

@@ -1,4 +1,4 @@
-import { gridLayout, intersects, layoutFromRects, masonryLayout, pagedLayout, type Rect, type ReflowLayout, type ReflowResult, type Region } from '../layout';
+import { gridLayout, intersects, layoutFromRects, masonryLayout, pagedLayout, type Rect, type ReflowLayout, type ReflowResult, type Region } from '..';
 
 /** `n` items for a layout to place (a grid ignores what they are). */
 const items = (n: number) => Array.from({ length: n }, (_, i) => i);

@@ -1,5 +1,5 @@
 import { beginDrag, edgeVelocity, endDrag, hoverIndex, moveKeys, slotAt, updateDrag, type DragSession } from '../drag';
-import { gridLayout, layoutFromRects, pagedLayout } from '../layout';
+import { gridLayout, layoutFromRects, pagedLayout } from '../../layout';
 
 const keys = (n: number) => Array.from({ length: n }, (_, i) => String(i));
 const session = (...dragged: string[]): DragSession => ({ origin: 'internal', items: dragged.map((key) => ({ key, types: ['text/plain'] })) });
