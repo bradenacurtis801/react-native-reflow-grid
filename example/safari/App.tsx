@@ -1,10 +1,10 @@
 import { useCallback, useMemo, useRef, useState, type ComponentRef } from 'react';
-import { Keyboard, Share, StyleSheet, Text, View } from 'react-native';
+import { Keyboard, Share, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Easing, ReduceMotion, useAnimatedReaction, useSharedValue, withTiming } from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
 import { gridLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
 import { OverviewBars, PageBars } from './src/Bars';
-import { CARD_H, CARD_RADIUS, CARD_W, GAP, GRID_BOTTOM, GRID_TOP, SIDE, TITLE_H } from './src/metrics';
+import { CARD_RADIUS, GAP, makeMetrics, MetricsContext, SIDE, TITLE_H, useMetrics } from './src/metrics';
 import { PageOverlay, type Frame } from './src/PageOverlay';
 import { Snapshot } from './src/Snapshot';
 import { makeTabs, type Tab } from './src/tabs';
@@ -20,6 +20,18 @@ interface Open {
 
 /** Safari's tab overview, from the grid: tap a card and its page grows to fill the screen, and back through the tabs button. */
 export default function App() {
+  // Everything sized from the window is worked out again when it changes (an iPad turning, or split).
+  const { width, height } = useWindowDimensions();
+  const metrics = useMemo(() => makeMetrics(width, height), [width, height]);
+  return (
+    <MetricsContext.Provider value={metrics}>
+      <Tabs />
+    </MetricsContext.Provider>
+  );
+}
+
+function Tabs() {
+  const { columns, cardW, cardH, gridTop, gridBottom } = useMetrics();
   const [tabs, setTabs] = useState(() => makeTabs(1, 12));
   const next = useRef(13);
   const [open, setOpen] = useState<Open | null>(null);
@@ -126,8 +138,8 @@ export default function App() {
   const reload = useCallback(() => setReloads((n) => n + 1), []);
 
   const layout = useMemo<ReflowLayout<Tab>>(
-    () => gridLayout({ flow: 'vertical', lines: 2, gap: GAP, card: { aspect: CARD_W / (CARD_H + TITLE_H) } }),
-    [],
+    () => gridLayout({ flow: 'vertical', lines: columns, gap: GAP, card: { aspect: cardW / (cardH + TITLE_H) } }),
+    [columns, cardW, cardH],
   );
   // The ✕ comes first: where regions overlap, the first one a touch lands in is the one pressed.
   const touchRegions = useCallback(
@@ -148,7 +160,7 @@ export default function App() {
             else previews.current.delete(t.id);
           }}
           collapsable={false}
-          style={styles.preview}
+          style={[styles.preview, { width: cardW, height: cardH }]}
         >
           <Snapshot tab={t} offset={offsets[t.id] ?? 0} />
           <View style={styles.close}>
@@ -163,16 +175,16 @@ export default function App() {
         </View>
       </View>
     ),
-    [offsets],
+    [offsets, cardW, cardH],
   );
   // What a card shows while it waits to draw its page (see `settleDelay`).
   const renderPlaceholder = useCallback(
     (t: Tab) => (
       <View style={styles.slot}>
-        <View style={[styles.preview, { backgroundColor: t.dark ? `hsl(${t.hue}, 30%, 14%)` : `hsl(${t.hue}, 50%, 88%)` }]} />
+        <View style={[styles.preview, { width: cardW, height: cardH, backgroundColor: t.dark ? `hsl(${t.hue}, 30%, 14%)` : `hsl(${t.hue}, 50%, 88%)` }]} />
       </View>
     ),
-    [],
+    [cardW, cardH],
   );
 
   return (
@@ -185,8 +197,8 @@ export default function App() {
           data={shown}
           keyExtractor={(t) => String(t.id)}
           layout={layout}
-          startInset={GRID_TOP}
-          endInset={GRID_BOTTOM}
+          startInset={gridTop}
+          endInset={gridBottom}
           onReorder={query ? undefined : reorder}
           onSwipe={(t) => remove(t.id)}
           swipeDirections={['left']}
@@ -208,7 +220,7 @@ const styles = StyleSheet.create({
   grid: { flex: 1 },
   cards: { flex: 1, marginHorizontal: SIDE },
   slot: { flex: 1 },
-  preview: { width: CARD_W, height: CARD_H, borderRadius: CARD_RADIUS, backgroundColor: '#262a33' },
+  preview: { borderRadius: CARD_RADIUS, backgroundColor: '#262a33' },
   close: { position: 'absolute', top: 8, right: 8, width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(30,33,41,0.78)' },
   closeMark: { color: '#fff', fontSize: 14, fontWeight: '700' },
   titleRow: { height: TITLE_H, flexDirection: 'row', alignItems: 'center', gap: 8, paddingHorizontal: 6 },

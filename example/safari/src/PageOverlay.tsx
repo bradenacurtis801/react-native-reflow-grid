@@ -12,7 +12,7 @@ import Animated, {
   type SharedValue,
 } from 'react-native-reanimated';
 import { scheduleOnUI } from 'react-native-worklets';
-import { CARD_RADIUS, SCREEN_RADIUS, SH, SW } from './metrics';
+import { CARD_RADIUS, useMetrics } from './metrics';
 import { PageContent } from './PageContent';
 import type { Tab } from './tabs';
 
@@ -34,7 +34,8 @@ const SCROLL_STEP = 4;
  * scrolls down `hidden` goes to 1, which the bars take as their cue (and back to 0 as it scrolls up).
  */
 export function PageOverlay({ tab, frame, p, hidden, scrollY, initialY, expanded, reloads }: { tab: Tab; frame: Frame; p: SharedValue<number>; hidden: SharedValue<number>; scrollY: SharedValue<number>; initialY: number; expanded: boolean; reloads: number }) {
-  const scale0 = frame.w / SW;
+  const { width, height, screenRadius } = useMetrics();
+  const scale0 = frame.w / width;
   const scroll = useAnimatedRef<Animated.ScrollView>();
 
   const clip = useAnimatedStyle(() => {
@@ -42,9 +43,9 @@ export function PageOverlay({ tab, frame, p, hidden, scrollY, initialY, expanded
     return {
       left: frame.x * (1 - k),
       top: frame.y * (1 - k),
-      width: frame.w + (SW - frame.w) * k,
-      height: frame.h + (SH - frame.h) * k,
-      borderRadius: CARD_RADIUS + (SCREEN_RADIUS - CARD_RADIUS) * k,
+      width: frame.w + (width - frame.w) * k,
+      height: frame.h + (height - frame.h) * k,
+      borderRadius: CARD_RADIUS + (screenRadius - CARD_RADIUS) * k,
     };
   });
   const page = useAnimatedStyle(() => ({ transform: [{ scale: scale0 + (1 - scale0) * p.get() }] }));
@@ -78,7 +79,7 @@ export function PageOverlay({ tab, frame, p, hidden, scrollY, initialY, expanded
 
   return (
     <Animated.View pointerEvents={expanded ? 'auto' : 'none'} style={[styles.clip, clip]}>
-      <Animated.View style={[styles.page, page]}>
+      <Animated.View style={[styles.page, { width, height }, page]}>
         <Animated.ScrollView
           ref={scroll}
           scrollEnabled={expanded}
@@ -100,5 +101,5 @@ export function PageOverlay({ tab, frame, p, hidden, scrollY, initialY, expanded
 const styles = StyleSheet.create({
   clip: { position: 'absolute', overflow: 'hidden', backgroundColor: '#000' },
   // At a screen's size, scaled from its corner: the clip above shows as much of it as the frame is big.
-  page: { width: SW, height: SH, transformOrigin: 'top left' },
+  page: { transformOrigin: 'top left' },
 });

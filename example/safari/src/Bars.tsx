@@ -2,7 +2,7 @@ import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import type { ReactNode } from 'react';
 import { Pressable, StyleSheet, Text, TextInput, View, type StyleProp, type ViewStyle } from 'react-native';
 import Animated, { Extrapolation, interpolate, useAnimatedStyle, useSharedValue, type SharedValue } from 'react-native-reanimated';
-import { BAR_BOTTOM, BAR_H, BAR_SIDE, INK, INK_DIM, PILL_H, PILL_TOP, SW } from './metrics';
+import { BAR_H, BAR_SIDE, INK, INK_DIM, PILL_H, useMetrics } from './metrics';
 import { Book, Chevron, Magnifier, Plus, Share, Sheets } from './Icons';
 
 /** A bar of glass (iOS 26's liquid glass); where there is none, a dark translucent one. */
@@ -31,10 +31,11 @@ function Btn({ onPress, children, dim }: { onPress?: () => void; children: React
 
 /** The bars over the tab overview: a pill to search the tabs, and a bar to add a tab, count them and finish. They fade as a tab opens. */
 export function OverviewBars({ p, count, active, query, onQuery, onNew, onDone }: { p: SharedValue<number>; count: number; active: boolean; query: string; onQuery: (text: string) => void; onNew: () => void; onDone: () => void }) {
+  const { pillTop, barBottom } = useMetrics();
   const fade = useAnimatedStyle(() => ({ opacity: interpolate(p.get(), [0, 0.45], [1, 0], Extrapolation.CLAMP) }));
   return (
     <Animated.View pointerEvents={active ? 'box-none' : 'none'} style={[StyleSheet.absoluteFill, fade]}>
-      <View style={[styles.pillHit, { top: PILL_TOP }]}>
+      <View style={[styles.pillHit, { top: pillTop }]}>
         <GlassBar style={styles.pill}>
           <Magnifier />
           <TextInput
@@ -51,7 +52,7 @@ export function OverviewBars({ p, count, active, query, onQuery, onNew, onDone }
           />
         </GlassBar>
       </View>
-      <GlassBar style={[styles.toolbar, { bottom: BAR_BOTTOM }]}>
+      <GlassBar style={[styles.toolbar, { bottom: barBottom }]}>
         <Btn onPress={onNew}>
           <Plus />
         </Btn>
@@ -69,22 +70,23 @@ export function OverviewBars({ p, count, active, query, onQuery, onNew, onDone }
  * follow the page's scroll: `hidden` goes to 1 as it scrolls down (the bar slides away, the pill shrinks) and back to 0 as it scrolls up.
  */
 export function PageBars({ p, hidden, host, active, onTabs, onReload, onShare, onHost }: { p: SharedValue<number>; hidden: SharedValue<number>; host: string; active: boolean; onTabs: () => void; onReload: () => void; onShare: () => void; onHost: (host: string) => void }) {
+  const { width, pillTop, barBottom } = useMetrics();
   const arrive = useAnimatedStyle(() => ({ opacity: interpolate(p.get(), [0.55, 1], [0, 1], Extrapolation.CLAMP) }));
   // The pill collapses about its middle, as Safari's does, to just the domain (its width, and the padding either side) and
   // PILL_HEIGHT_END of its height (measured from Safari's frames). It's the frame that shrinks, not a scale, so the text keeps its size.
   const hostWidth = useSharedValue(0);
   const pill = useAnimatedStyle(() => {
     const k = hidden.get();
-    const full = SW - BAR_SIDE * 2;
+    const full = width - BAR_SIDE * 2;
     const end = Math.min(hostWidth.get() + PILL_PAD * 2, full);
     const inset = BAR_SIDE + k * ((full - end) / 2);
     const height = PILL_H * (1 - k * (1 - PILL_HEIGHT_END));
-    return { left: inset, right: inset, height, top: PILL_TOP + (PILL_H - height) / 2 };
+    return { left: inset, right: inset, height, top: pillTop + (PILL_H - height) / 2 };
   });
   const toolbar = useAnimatedStyle(() => ({
     left: BAR_SIDE + hidden.get() * 14,
     right: BAR_SIDE + hidden.get() * 14,
-    transform: [{ translateY: hidden.get() * (BAR_H + BAR_BOTTOM + 28) }],
+    transform: [{ translateY: hidden.get() * (BAR_H + barBottom + 28) }],
   }));
   const edges = useAnimatedStyle(() => ({ opacity: 1 - hidden.get() }));
   return (
@@ -111,7 +113,7 @@ export function PageBars({ p, hidden, host, active, onTabs, onReload, onShare, o
           <Pressable onPress={onReload} hitSlop={8} style={styles.reloadHit}><Animated.Text style={[styles.reload, edges]}>↻</Animated.Text></Pressable>
         </GlassBar>
       </Animated.View>
-      <Animated.View pointerEvents="box-none" style={[styles.wrap, { bottom: BAR_BOTTOM }, toolbar]}>
+      <Animated.View pointerEvents="box-none" style={[styles.wrap, { bottom: barBottom }, toolbar]}>
         <GlassBar style={styles.toolbarFill}>
           <Btn><Chevron direction="left" /></Btn>
           <Btn dim><Chevron direction="right" dim /></Btn>

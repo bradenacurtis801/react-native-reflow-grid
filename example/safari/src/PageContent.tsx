@@ -1,6 +1,6 @@
 import { memo } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { SW, TOP_INSET } from './metrics';
+import { useMetrics } from './metrics';
 import type { Tab } from './tabs';
 
 const WORDS = (
@@ -22,6 +22,7 @@ const paragraph = (seed: number) => [sentence(seed, 11), sentence(seed + 3, 9), 
  * The cards show it scaled down, and the page that opens is this, scrolling.
  */
 function PageContentImpl({ tab }: { tab: Tab }) {
+  const { width, top } = useMetrics();
   const accent = `hsl(${tab.hue}, 68%, 52%)`;
   const ground = tab.dark ? `hsl(${tab.hue}, 30%, 11%)` : '#ffffff';
   const ink = tab.dark ? '#f2f3f5' : '#14161a';
@@ -29,8 +30,8 @@ function PageContentImpl({ tab }: { tab: Tab }) {
   const band = tab.dark ? `hsl(${tab.hue}, 28%, 19%)` : `hsl(${tab.hue}, 60%, 94%)`;
 
   return (
-    <View style={[styles.page, { backgroundColor: ground }]}>
-      <View style={[styles.masthead, { backgroundColor: tab.dark ? `hsl(${tab.hue}, 45%, 22%)` : accent }]}>
+    <View style={{ width, backgroundColor: ground }}>
+      <View style={[styles.masthead, { paddingTop: top + 74, backgroundColor: tab.dark ? `hsl(${tab.hue}, 45%, 22%)` : accent }]}>
         <Text style={styles.site}>{tab.host.toUpperCase()}</Text>
         <Text style={styles.headline}>{tab.title}</Text>
         <Text style={styles.deck}>{sentence(tab.id + 1, 14)}</Text>
@@ -72,8 +73,7 @@ function PageContentImpl({ tab }: { tab: Tab }) {
 export const PageContent = memo(PageContentImpl);
 
 const styles = StyleSheet.create({
-  page: { width: SW },
-  masthead: { paddingTop: TOP_INSET + 74, paddingHorizontal: 22, paddingBottom: 30, gap: 10 },
+  masthead: { paddingHorizontal: 22, paddingBottom: 30, gap: 10 },
   site: { color: 'rgba(255,255,255,0.8)', fontSize: 13, fontWeight: '700', letterSpacing: 1.2 },
   headline: { color: '#fff', fontSize: 34, fontWeight: '800', lineHeight: 39 },
   deck: { color: 'rgba(255,255,255,0.88)', fontSize: 17, lineHeight: 24 },
