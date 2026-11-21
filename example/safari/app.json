@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "Reflow Grid Safari",
+    "slug": "reflow-grid-safari",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "dark",
+    "ios": { "bundleIdentifier": "dev.reflowgrid.safari" },
+    "android": { "package": "dev.reflowgrid.safari" }
+  }
+}

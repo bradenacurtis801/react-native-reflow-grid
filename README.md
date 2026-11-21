@@ -173,6 +173,7 @@ Two small Expo apps in [`example/`](example), each on its own:
 
 - [`example/tiles`](example/tiles): the grid itself. Switch between 3 columns, a list, masonry (columns, or rows that scroll sideways), one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it, holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
 - [`example/photos`](example/photos): real content. Remote photos in a masonry grid and a grid of playing videos (it adds `expo-image` and `expo-video`), with like and remove as `touchRegions`, and a meter of the JS and UI frame rates and the cells mounted.
+- [`example/safari`](example/safari): Safari's tab overview on the grid: tap a card and its page grows to fill the screen, and shrinks back into its card; the address pill and toolbar are glass (`expo-glass-effect`, iOS 26) and follow the page's scroll; search filters the tabs, and a tab's page keeps its scroll position. A native iOS 26 build is best; the glass is a plain translucent bar elsewhere.
 
 ```sh
 cd example/tiles   # or example/photos
