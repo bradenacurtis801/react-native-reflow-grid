@@ -12,6 +12,7 @@ import {
   type ViewStyle,
 } from 'react-native';
 import Animated, {
+  Easing,
   ReduceMotion,
   useAnimatedScrollHandler,
   useAnimatedStyle,
@@ -32,6 +33,21 @@ import { loadExpoHaptics } from './loadExpoHaptics';
 import { PageDots } from './PageDots';
 import { DOTS_HIT, type PageIndicatorOptions } from './pageIndicator';
 import { SlotPool } from './slots';
+import {
+  classifyMove,
+  exitDuration,
+  exitTarget,
+  moveVelocity,
+  startVelocity,
+  limitOffset,
+  swipeAllowed,
+  swipeDirection,
+  swipeOutcome,
+  SWIPE_EXIT_MS,
+  SWIPE_HOLD_MS,
+  type SwipeDirection,
+  type Velocity,
+} from './swipe';
 import { useDragReorder } from './useDragReorder';
 import { attachWebDrag } from './webDrag';
 
@@ -91,11 +107,22 @@ interface Finger {
   oy: SharedValue<number>;
 }
 
-interface ItemInfo {
+export interface ItemInfo {
   index: number;
   size: Size;
   /** It's being dragged: its slot shows where it will land. */
   dragging: boolean;
+}
+
+/** What `renderItem` is given about an item. */
+export interface ItemRenderInfo extends ItemInfo {
+  /**
+   * How far a swipe (`onSwipe`) has taken the item from its slot, in pt along the swipe: negative towards the
+   * start (left, or up), positive towards the end (right, or down), and 0 at rest. A shared value, so what the
+   * item shows can follow the finger on the UI thread, in an animated style: a tint that deepens as it's pulled,
+   * a label that fades in. It's the same value for the item's whole life, however it's drawn.
+   */
+  swipe: SharedValue<number>;
 }
 
 /**
@@ -117,6 +144,26 @@ interface Pending {
   startY: number;
   /** It moved too far: a scroll, not a press. */
   moved: boolean;
+}
+
+/** A finger that went down on the grid, swiping an item away (`onSwipe`) or on its way to it. */
+interface SwipeGesture {
+  id: string;
+  startX: number;
+  startY: number;
+  /** The scroll offset where it went down: the item under it is the one there. */
+  startOffset: Offset;
+  /** It has gone across the scroll, on an item that can be swiped: the item follows it. */
+  active: boolean;
+  key?: string;
+  item?: unknown;
+  /** The item's size across the scroll's way, for how far is far enough. */
+  size: number;
+  /** Where its slot starts across the scroll's way, in the grid's frame: how far it has to go to clear the edge. */
+  slotStart: number;
+  /** How far the item is from its slot. */
+  offset: number;
+  speed: Velocity;
 }
 
 /** The page a scroll position is on: the nearest whole one. */
@@ -174,6 +221,9 @@ export function ReflowGrid<T>({
   onReorder,
   canDrag,
   onDragStart,
+  canSwipe,
+  onSwipe,
+  swipeDirections,
   haptics = true,
   pageIndicator = true,
   reduceMotion = ReduceMotion.System,
@@ -182,7 +232,7 @@ export function ReflowGrid<T>({
   data: readonly T[];
   keyExtractor: (item: T, index: number) => string;
   /** One item's visuals: they fill the cell the layout gives it. */
-  renderItem: (item: T, info: ItemInfo) => ReactNode;
+  renderItem: (item: T, info: ItemRenderInfo) => ReactNode;
   /** One item's pressable parts (see `TouchRegion`). Memoize it with the rest. */
   touchRegions?: (item: T, info: ItemInfo) => TouchRegion[];
   /** Memoize it: a new function lays everything out again. */
@@ -224,6 +274,23 @@ export function ReflowGrid<T>({
   /** A drag has begun: called with what was lifted (see `DragSession`). (Haptic feedback is `haptics`.) */
   onDragStart?: (session: DragSession) => void;
   /**
+   * Turns on swipe to remove. A finger that goes down on an item and moves across the scroll
+   * (sideways in a vertical grid, up or down in a horizontal one) before it scrolls or lifts the item slides the item
+   * with it. Let go far enough, or fast enough, and this is called with the item and the way it went: take it out of
+   * `data` and it carries on that way and fades while the rest glide into its place. Return `false` to keep it, and it
+   * springs back; so it does if it's still in `data` a moment later. Not for a grid that scrolls on both axes.
+   */
+  onSwipe?: (item: T, direction: SwipeDirection) => boolean | void;
+  /** Whether an item can be swiped. @default every item can */
+  canSwipe?: (item: T, index: number) => boolean;
+  /**
+   * The ways an item may be swiped: `'left'` and `'right'` in a vertical grid, `'up'` and `'down'` in a horizontal
+   * one (others are ignored). An item can't be pulled a way that isn't listed: a finger that starts that way doesn't pick it up, and
+   * one that turns back that way stops at the item's slot. Say which way in `onSwipe`'s second argument.
+   * @default either way across the scroll
+   */
+  swipeDirections?: readonly SwipeDirection[];
+  /**
    * Haptic feedback for the grid's moments: lifting an item, it moving to another
    * slot, a drop that changed the order, a page turning during a drag, and
    * scrubbing the page dots. `true` (the default): `expo-haptics`, if the app has it
@@ -249,6 +316,8 @@ export function ReflowGrid<T>({
 }) {
   const renderStart = now();
   const mainHorizontal = axis === 'horizontal';
+  // Across the scroll: the way an item is swiped.
+  const swipeAxis: 'x' | 'y' = mainHorizontal ? 'y' : 'x';
   const move = useMemo(() => ({ ...MOVE, reduceMotion }), [reduceMotion]);
   // What gives feedback: the app's function, or `expo-haptics` if it has it (not on web), or nothing.
   const haptic = useMemo(
@@ -285,16 +354,21 @@ export function ReflowGrid<T>({
   // Worked out as `data` changes, in render: after the commit they'd be gone for a frame.
   const [seen, setSeen] = useState(data);
   const [leaving, setLeaving] = useState<Leaving<T>[]>([]);
+  // What's leaving in this render. When `data` has just changed that's the new list, not `leaving` (the state
+  // only has it from the render that follows): the cells of the items just removed must be known as leaving now,
+  // or they're taken for ones waiting to be reused, and let go of.
+  let leavingNow = leaving;
   if (seen !== data) {
     const keys = new Set(data.map(keyExtractor));
-    setSeen(data);
-    setLeaving([
+    leavingNow = [
       ...leaving.filter((l) => !keys.has(l.key)),
       ...seen.flatMap((item, i) => {
         const key = keyExtractor(item, i);
         return keys.has(key) ? [] : [{ key, item }];
       }),
-    ]);
+    ];
+    setSeen(data);
+    setLeaving(leavingNow);
   }
 
   // Dragging (see `dragEngine.ts`): what's shown is `data` in the order of the drag's preview — after a
@@ -390,8 +464,18 @@ export function ReflowGrid<T>({
   const lastRects = useRef(new Map<string, Rect>());
   // Each mounted cell's element on web, for the image a drag carries.
   const cellNodes = useRef(new Map<string, unknown>());
+  // Swiping an item away (`onSwipe`). Each cell registers its swipe offset here, by item: a swipe sets it as the finger moves, with no render.
+  const swipes = useRef(new Map<string, SharedValue<number>>());
+  // The items just swiped away, and the way they went: the cell that leaves for one carries on that way, and doesn't shrink.
+  const swiped = useRef(new Map<string, SwipeDirection>());
+  // The fingers swiping, or on their way to it, by finger: each moves its own item, and any number can at once.
+  const swipeGestures = useRef(new Map<string, SwipeGesture>());
+  // How many are swiping an item: the scroll view mustn't take any of them over.
+  const [swiping, setSwiping] = useState(0);
+  const dataRef = useRef(data);
+  dataRef.current = data;
   // The items on screen, with where they go and their touch regions — what a touch is hit against.
-  const slots = useRef<{ key: string; rect: Rect; regions: TouchRegion[] }[]>([]);
+  const slots = useRef<{ key: string; index: number; rect: Rect; regions: TouchRegion[] }[]>([]);
   // Every key the grid has shown before this render: an item not among them is new, and grows in.
   const knownKeys = useRef(new Set<string>());
   const settled = useRef(false);
@@ -415,6 +499,7 @@ export function ReflowGrid<T>({
   const gone = useCallback(
     (key: string) => {
       lastRects.current.delete(key);
+      swiped.current.delete(key);
       setLeaving((all) => all.filter((l) => l.key !== key));
     },
     [],
@@ -457,7 +542,7 @@ export function ReflowGrid<T>({
   // to `leaving` is the same cell, and carries on from where it was. Recycled, it's keyed by its
   // slot (`SlotPool`), and a leaving item carries on in the slot it was in.
   const cells: ReactNode[] = [];
-  const slotList: { key: string; rect: Rect; regions: TouchRegion[] }[] = [];
+  const slotList: { key: string; index: number; rect: Rect; regions: TouchRegion[] }[] = [];
   const pool = useRef(new SlotPool());
   // Each slot's cell as last drawn: one waiting to be reused is drawn again as it was, so React leaves it be.
   const drawn = useRef(new Map<number, ReactNode>());
@@ -470,7 +555,7 @@ export function ReflowGrid<T>({
     const w = windowOf(offset.current);
     const wanted = (indices ?? []).map((index) => keyExtractor(items[index]!, index));
     // A leaving item is drawn while it's on screen.
-    const leavingShown = leaving.filter((l) => {
+    const leavingShown = leavingNow.filter((l) => {
       const rect = lastRects.current.get(l.key);
       return !!rect && intersects(rect, w);
     });
@@ -497,7 +582,7 @@ export function ReflowGrid<T>({
       const key = wanted[n]!;
       const rect = placed.rectOf(index);
       const info: ItemInfo = { index, size: { width: rect.width, height: rect.height }, dragging: draggedKeys.has(key) };
-      slotList.push({ key, rect, regions: touchRegions?.(item, info) ?? [] });
+      slotList.push({ key, index, rect, regions: touchRegions?.(item, info) ?? [] });
       const slot = slotOfWanted?.[n];
       const cell = (
         <ReflowCell
@@ -513,6 +598,8 @@ export function ReflowGrid<T>({
           floating={floating}
           finger={finger}
           cellNodes={cellNodes}
+          swipes={swipes}
+          swipeAxis={swipeAxis}
           onGone={gone}
           reduceMotion={reduceMotion}
         />
@@ -535,8 +622,11 @@ export function ReflowGrid<T>({
           renderItem={renderItem}
           leaving
           start={rect}
+          exit={swiped.current.get(l.key)}
           onGone={gone}
           cellNodes={cellNodes}
+          swipes={swipes}
+          swipeAxis={swipeAxis}
           reduceMotion={reduceMotion}
         />
       );
@@ -600,6 +690,93 @@ export function ReflowGrid<T>({
         )
       : undefined;
   };
+  // Swiping an item away: where the finger is, as it moves, and what to do when it lifts.
+  const swipeOn = onSwipe != null && axis !== 'both';
+  // The ways an item may go along the swipe: x in a vertical grid, y in a horizontal one.
+  const allowed = swipeAllowed(swipeDirections, !mainHorizontal);
+  const trackSwipe = (s: SwipeGesture, pageX: number, pageY: number) => {
+    const dx = pageX - s.startX;
+    const dy = pageY - s.startY;
+    const across = mainHorizontal ? dy : dx;
+    const along = mainHorizontal ? dx : dy;
+    if (!s.active) {
+      // Held still, it's lifted: a drag. Along the scroll, it's a scroll.
+      if (drag) {
+        swipeGestures.current.delete(s.id);
+        return;
+      }
+      const verdict = classifyMove(across, along);
+      if (verdict === 'wait') return;
+      if (verdict === 'scroll') {
+        swipeGestures.current.delete(s.id);
+        return;
+      }
+      // Across it, but the way it went isn't one an item may go: not a swipe.
+      if (limitOffset(across, allowed) === 0) {
+        swipeGestures.current.delete(s.id);
+        return;
+      }
+      // On an item that can be swiped: from where the finger went down.
+      const c = contentOf(s.startOffset);
+      const x = s.startX - (origin.current?.left ?? 0) + c.x;
+      const y = s.startY - (origin.current?.top ?? 0) + c.y - crossStart;
+      const slot = slots.current.find((r) => x >= r.rect.x && x < r.rect.x + r.rect.width && y >= r.rect.y && y < r.rect.y + r.rect.height);
+      const item = slot ? items[slot.index] : undefined;
+      if (!slot || item === undefined || (canSwipe && !canSwipe(item, slot.index))) {
+        swipeGestures.current.delete(s.id);
+        return;
+      }
+      // Another finger is already swiping that item: an item goes with one finger.
+      for (const other of swipeGestures.current.values()) {
+        if (other.active && other.key === slot.key) {
+          swipeGestures.current.delete(s.id);
+          return;
+        }
+      }
+      s.active = true;
+      s.key = slot.key;
+      s.item = item;
+      s.size = mainHorizontal ? slot.rect.height : slot.rect.width;
+      s.slotStart = mainHorizontal ? slot.rect.y + crossStart : slot.rect.x;
+      perfLog(`swipe begins on ${slot.key}`);
+      setSwiping((n) => n + 1);
+    }
+    // A finger turned back the way an item may not go leaves it at its slot.
+    const held = limitOffset(across, allowed);
+    s.offset = held;
+    s.speed = moveVelocity(s.speed, held, now());
+    if (s.key) swipes.current.get(s.key)?.set(held);
+  };
+  const finishSwipe = (s: SwipeGesture, cancelled: boolean) => {
+    swipeGestures.current.delete(s.id);
+    const key = s.key;
+    if (!s.active || key === undefined) return;
+    setSwiping((n) => Math.max(0, n - 1));
+    const cell = swipes.current.get(key);
+    perfLog(`swipe ends: offset=${s.offset.toFixed(0)} speed=${s.speed.v.toFixed(0)} size=${s.size.toFixed(0)} ${cancelled ? 'cancelled' : swipeOutcome(s.offset, s.speed.v, s.size)}${cell ? '' : ' (no cell registered)'}`);
+    if (!cell) return;
+    if (!cancelled && swipeOutcome(s.offset, s.speed.v, s.size) === 'commit') {
+      const direction = swipeDirection(s.offset, !mainHorizontal);
+      // Marked first: the cell that leaves for it is drawn in the render `onSwipe` brings.
+      swiped.current.set(key, direction);
+      if (onSwipe?.(s.item as T, direction) !== false) {
+        // It flies off the edge it was going to, as fast as it was let go.
+        const room = (mainHorizontal ? viewport?.height : viewport?.width) ?? s.slotStart + s.size * 2;
+        const target = exitTarget(s.offset, s.slotStart, s.size, room);
+        const duration = exitDuration(target - s.offset, s.speed.v);
+        cell.set(withTiming(target, { duration, easing: Easing.out(Easing.quad), reduceMotion }));
+        // Not taken out of `data` after a moment: it comes back.
+        setTimeout(() => {
+          swiped.current.delete(key);
+          const stays = dataRef.current.some((item, i) => keyExtractor(item, i) === key);
+          if (stays) swipes.current.get(key)?.set(withSpring(0, move));
+        }, SWIPE_HOLD_MS);
+        return;
+      }
+      swiped.current.delete(key);
+    }
+    cell.set(withSpring(0, move));
+  };
   const onTouchStart = (e: GestureResponderEvent) => {
     const { changedTouches } = e.nativeEvent;
     // On web this is a `TouchList`, not an array.
@@ -607,6 +784,23 @@ export function ReflowGrid<T>({
     const first = downs[0];
     if (first) engine.touchDown(first.id, { x: first.x, y: first.y });
     for (const { id, x, y } of downs) pending.current.set(id, { startX: x, startY: y, moved: false });
+    // A finger on an item may swipe it away, whatever the others are doing: whether it does is known once it has moved.
+    if (swipeOn) {
+      for (const { id, x, y } of downs) {
+        if (swipeGestures.current.has(id)) continue;
+        swipeGestures.current.set(id, {
+          id,
+          startX: x,
+          startY: y,
+          startOffset: { ...offset.current },
+          active: false,
+          size: 0,
+          slotStart: 0,
+          offset: 0,
+          speed: startVelocity(0, now()),
+        });
+      }
+    }
     // Hit against a place: for each finger still down, the region under where it went down.
     const place = (left: number, top: number) => {
       for (const { id } of downs) {
@@ -626,6 +820,8 @@ export function ReflowGrid<T>({
   const onTouchMove = (e: GestureResponderEvent) => {
     for (const t of e.nativeEvent.changedTouches) {
       engine.touchMove(t.identifier, { x: t.pageX, y: t.pageY });
+      const gesture = swipeGestures.current.get(t.identifier);
+      if (gesture) trackSwipe(gesture, t.pageX, t.pageY);
       const p = pending.current.get(t.identifier);
       if (!p || p.moved) continue;
       if (Math.hypot(t.pageX - p.startX, t.pageY - p.startY) > SLOP) {
@@ -639,6 +835,8 @@ export function ReflowGrid<T>({
     const { changedTouches } = e.nativeEvent;
     for (const t of changedTouches) {
       engine.touchUp(t.identifier);
+      const gesture = swipeGestures.current.get(t.identifier);
+      if (gesture) finishSwipe(gesture, false);
       const p = pending.current.get(t.identifier);
       pending.current.delete(t.identifier);
       if (!p) continue;
@@ -648,6 +846,8 @@ export function ReflowGrid<T>({
   const onTouchCancel = (e: GestureResponderEvent) => {
     for (const t of e.nativeEvent.changedTouches) {
       engine.touchCancel(t.identifier);
+      const gesture = swipeGestures.current.get(t.identifier);
+      if (gesture) finishSwipe(gesture, true);
       pending.current.delete(t.identifier);
     }
   };
@@ -854,7 +1054,7 @@ export function ReflowGrid<T>({
         onScroll={FOLLOW_ON_UI_THREAD ? (onScrollUI as never) : mainHorizontal ? onScrollX : nested || !both ? onScrollY : onScrollBoth}
         scrollEventThrottle={16}
         // A lifted item follows the finger, which must not scroll the grid as well.
-        scrollEnabled={!(drag && floating)}
+        scrollEnabled={!(drag && floating) && swiping === 0}
         // A sideways grid's scroll view is as tall as its row, so its indicator sits under the tiles, not at the room's foot.
         style={[mainHorizontal && placed && roomHeight != null ? { height: Math.min(placed.size.height, roomHeight) } : undefined, snapStyle]}
         pagingEnabled={pages != null && !web}
@@ -911,7 +1111,7 @@ interface CellProps<T> {
   item: T;
   /** Its place in what's shown; -1 once it's leaving. */
   index: number;
-  renderItem: (item: T, info: ItemInfo) => ReactNode;
+  renderItem: (item: T, info: ItemRenderInfo) => ReactNode;
   /** Where it goes — absent once it's leaving: it stays where it is. */
   rect?: Rect;
   /** Where it starts from when it's mounted: its last slot, so a move that was under way carries on. */
@@ -925,6 +1125,12 @@ interface CellProps<T> {
   finger?: Finger;
   /** Where the cell registers its element (web), for the image a drag carries. */
   cellNodes: { current: Map<string, unknown> };
+  /** Where the cell registers how far it's swiped, by item: the grid sets it as a finger swipes the item away. */
+  swipes: { current: Map<string, SharedValue<number>> };
+  /** The axis a swipe moves it along. */
+  swipeAxis: 'x' | 'y';
+  /** Leaving because it was swiped away, the way it went: it carries on that way and fades, and doesn't shrink. */
+  exit?: SwipeDirection;
   onGone: (id: string) => void;
   reduceMotion: ReduceMotion;
 }
@@ -936,6 +1142,7 @@ function ItemContentImpl<T>({
   width,
   height,
   dragging,
+  swipe,
   renderItem,
 }: {
   item: T;
@@ -943,9 +1150,10 @@ function ItemContentImpl<T>({
   width: number;
   height: number;
   dragging: boolean;
-  renderItem: (item: T, info: ItemInfo) => ReactNode;
+  swipe: SharedValue<number>;
+  renderItem: (item: T, info: ItemRenderInfo) => ReactNode;
 }) {
-  return <>{renderItem(item, { index, size: { width, height }, dragging })}</>;
+  return <>{renderItem(item, { index, size: { width, height }, dragging, swipe })}</>;
 }
 const ItemContent = memo(ItemContentImpl) as typeof ItemContentImpl;
 
@@ -967,6 +1175,9 @@ function sameCell(a: CellProps<unknown>, b: CellProps<unknown>): boolean {
     a.floating === b.floating &&
     a.finger === b.finger &&
     a.cellNodes === b.cellNodes &&
+    a.swipes === b.swipes &&
+    a.swipeAxis === b.swipeAxis &&
+    a.exit === b.exit &&
     a.onGone === b.onGone &&
     a.reduceMotion === b.reduceMotion
   );
@@ -986,6 +1197,9 @@ function ReflowCellImpl<T>({
   floating = false,
   finger,
   cellNodes,
+  swipes,
+  swipeAxis,
+  exit,
   onGone,
   reduceMotion,
 }: CellProps<T>) {
@@ -999,6 +1213,8 @@ function ReflowCellImpl<T>({
   const opacity = useSharedValue(appear ? 0 : 1);
   const dim = useSharedValue(1);
   const lifted = useSharedValue(0);
+  // How far a swipe has taken it from its slot, along `swipeAxis`.
+  const swipe = useSharedValue(0);
   const wasLifted = useRef(false);
   const noFinger = useSharedValue(0);
   const fx = finger?.x ?? noFinger;
@@ -1014,6 +1230,14 @@ function ReflowCellImpl<T>({
   // The item this cell shows: it changes when the cell is reused for another (`SlotPool`).
   const shownId = useRef(id);
 
+  // The grid sets how far a swipe has taken the item, through here: by item, so a cell reused for another item is found under the new one.
+  useEffect(() => {
+    swipes.current.set(id, swipe);
+    return () => {
+      if (swipes.current.get(id) === swipe) swipes.current.delete(id);
+    };
+  }, [id, swipe, swipes]);
+
   useEffect(() => {
     if (leaving || !rect) return;
     // A lifted cell follows the finger at its own size: the slots it passes over aren't where it's going until it's dropped.
@@ -1026,6 +1250,7 @@ function ReflowCellImpl<T>({
       shownId.current = id;
       placed.current = true;
       wasLifted.current = false;
+      swipe.set(0);
       x.set(rect.x);
       y.set(rect.y);
       w.set(rect.width);
@@ -1058,8 +1283,13 @@ withSpring(rect.x, move),
 
   useEffect(() => {
     if (leaving) {
-      scale.set(withTiming(LEAVE_SCALE, { duration: LEAVE_MS, reduceMotion }));
-      opacity.set(withTiming(0, { duration: LEAVE_MS, reduceMotion }, (done) => done && runOnJS(onGone)(id)));
+      if (exit) {
+        // Swiped away, it's flying off the edge: it doesn't shrink, and it fades only at the end, when it's gone from sight.
+        opacity.set(withTiming(0, { duration: SWIPE_EXIT_MS, easing: Easing.in(Easing.cubic), reduceMotion }, (done) => done && runOnJS(onGone)(id)));
+      } else {
+        scale.set(withTiming(LEAVE_SCALE, { duration: LEAVE_MS, reduceMotion }));
+        opacity.set(withTiming(0, { duration: LEAVE_MS, reduceMotion }, (done) => done && runOnJS(onGone)(id)));
+      }
     } else {
       // Back in the list (or just added): full size again, from wherever it was.
       scale.set(withSpring(1, move));
@@ -1099,14 +1329,16 @@ withSpring(rect.x, move),
 
   const style = useAnimatedStyle(() => {
     const up = lifted.get() === 1;
+    // Swiped, it stays whole and above the others as it goes.
+    const away = swipe.get();
     return {
       width: w.get(),
       height: h.get(),
       opacity: opacity.get() * dim.get(),
-      zIndex: up ? 100 : 0,
+      zIndex: up ? 100 : away !== 0 ? 50 : 0,
       transform: [
-        { translateX: up ? fx.get() + sx.get() + ox.get() - gx.get() : x.get() },
-        { translateY: up ? fy.get() + sy.get() + oy.get() - gy.get() : y.get() },
+        { translateX: (up ? fx.get() + sx.get() + ox.get() - gx.get() : x.get()) + (swipeAxis === 'x' ? away : 0) },
+        { translateY: (up ? fy.get() + sy.get() + oy.get() - gy.get() : y.get()) + (swipeAxis === 'y' ? away : 0) },
         { scale: scale.get() },
       ],
     };
@@ -1127,6 +1359,7 @@ withSpring(rect.x, move),
         width={leaving ? 0 : (liftedSize.current?.width ?? rect?.width ?? 0)}
         height={leaving ? 0 : (liftedSize.current?.height ?? rect?.height ?? 0)}
         dragging={dragging}
+        swipe={swipe}
         renderItem={renderItem}
       />
     </Animated.View>

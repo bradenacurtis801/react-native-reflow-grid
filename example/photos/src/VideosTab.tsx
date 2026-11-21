@@ -63,6 +63,9 @@ export default function VideosTab({ onMounted }: TabProps) {
         crossEndInset={GAP}
         onMounted={onMounted}
         onReorder={reorder}
+        // Only left removes a clip: a finger going right leaves it where it is.
+        swipeDirections={['left']}
+        onSwipe={(c) => remove(c.id)}
         touchRegions={touchRegions}
         renderItem={(c) => (
           <View style={styles.card}>

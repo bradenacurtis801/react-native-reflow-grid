@@ -83,6 +83,24 @@ describe('SlotPool', () => {
     expect(after.slots).toEqual(before.slots.slice(1));
   });
 
+  it('keeps a pinned item in its cell when asked to discard the waiting ones too', () => {
+    const pool = new SlotPool();
+    const before = pool.assign(keys(1, 4), none, live);
+    // k1 is leaving (pinned), k2 only waits: k2's cell goes, k1's stays.
+    const after = pool.assign(keys(3, 4), new Set(['k1']), live, true);
+    expect(pool.slotFor('k1')).toBe(before.slots[0]);
+    expect(pool.slotFor('k2')).toBeUndefined();
+    expect(after.stale).toEqual([]);
+  });
+
+  it('does not give a pinned item\'s cell to one that comes in while it is pinned, even with nothing else free', () => {
+    const pool = new SlotPool();
+    const before = pool.assign(keys(1, 2), none, live);
+    const after = pool.assign(keys(2, 3), new Set(['k1']), live, true);
+    expect(pool.slotFor('k1')).toBe(before.slots[0]);
+    expect(after.slots[1]).not.toBe(before.slots[0]);
+  });
+
   it('lets the longest-waiting cells go, together, when the window shrinks', () => {
     const pool = new SlotPool();
     pool.assign(keys(1, 20), none, live);

@@ -58,6 +58,7 @@ export default function PhotosTab({ onMounted }: TabProps) {
         crossEndInset={GAP}
         onMounted={onMounted}
         onReorder={reorder}
+        onSwipe={(p) => remove(p.id)}
         touchRegions={touchRegions}
         renderItem={(p, { size }) => (
           <View style={styles.card}>
