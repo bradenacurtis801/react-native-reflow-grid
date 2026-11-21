@@ -13,6 +13,7 @@ import { runOnJS } from 'react-native-worklets';
 
 import type { Rect, Size } from '../layout';
 import { DRAGGED_OPACITY, ENTER_SCALE, LEAVE_MS, LEAVE_SCALE, LIFT_SCALE, MOVE } from './motion';
+import { placeAtOnce } from './placeBatch';
 import { perfLog } from '../support/perfLog';
 import { SWIPE_EXIT_MS, type SwipeDirection } from '../swipe/swipe';
 import type { Finger, ItemRenderInfo } from '../types';
@@ -50,7 +51,7 @@ export interface CellProps<T> {
 type Move = typeof MOVE & { reduceMotion: ReduceMotion };
 
 /** The animated values that place and dress one cell. All of them are read on the UI thread. */
-interface CellValues {
+export interface CellValues {
   x: SharedValue<number>;
   y: SharedValue<number>;
   w: SharedValue<number>;
@@ -146,21 +147,21 @@ function usePlacement(p: {
       shownId.current = id;
       placed.current = true;
       wasLifted.current = false;
-      v.swipe.set(0);
-      v.x.set(rect.x);
-      v.y.set(rect.y);
-      v.w.set(rect.width);
-      v.h.set(rect.height);
-      v.lifted.set(0);
-      v.dim.set(dragging && !floating ? DRAGGED_OPACITY : 1);
+      const dim = dragging && !floating ? DRAGGED_OPACITY : 1;
       if (appear) {
+        v.swipe.set(0);
+        v.x.set(rect.x);
+        v.y.set(rect.y);
+        v.w.set(rect.width);
+        v.h.set(rect.height);
+        v.lifted.set(0);
+        v.dim.set(dim);
         v.scale.set(ENTER_SCALE);
         v.opacity.set(0);
         v.scale.set(withSpring(1, move));
         v.opacity.set(withTiming(1, { duration: LEAVE_MS, reduceMotion: move.reduceMotion }));
       } else {
-        v.scale.set(1);
-        v.opacity.set(1);
+        placeAtOnce({ v, x: rect.x, y: rect.y, w: rect.width, h: rect.height, dim });
       }
       return;
     }
