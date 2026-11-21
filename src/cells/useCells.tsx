@@ -23,6 +23,8 @@ interface CellsInput<T> {
   windowNow: () => Region;
   keyExtractor: (item: T, index: number) => string;
   renderItem: (item: T, info: ItemRenderInfo) => ReactNode;
+  renderPlaceholder?: (item: T, info: ItemRenderInfo) => ReactNode;
+  settleDelay?: number;
   touchRegions?: (item: T, info: ItemInfo) => TouchRegion[];
   draggedKeys: ReadonlySet<string>;
   floating: boolean;
@@ -50,7 +52,7 @@ interface CellsInput<T> {
  */
 export function useCells<T>(p: CellsInput<T>) {
   const {
-    data, items, layout, placed, roomWidth, roomHeight, indices, windowNow, keyExtractor, renderItem, touchRegions,
+    data, items, layout, placed, roomWidth, roomHeight, indices, windowNow, keyExtractor, renderItem, renderPlaceholder, settleDelay, touchRegions,
     draggedKeys, floating, finger, leaving, leavingNow, taking, setLeaving, swipe, swipeAxis, reduceMotion, cellNodes, slots,
   } = p;
 
@@ -144,6 +146,8 @@ export function useCells<T>(p: CellsInput<T>) {
           item={item}
           index={index}
           renderItem={renderItem}
+          renderPlaceholder={renderPlaceholder}
+          settleDelay={settleDelay}
           rect={rect}
           start={lastRects.current.get(key)}
           appear={settled.current && !knownKeys.current.has(key)}
@@ -171,6 +175,8 @@ export function useCells<T>(p: CellsInput<T>) {
           item={l.item}
           index={-1}
           renderItem={renderItem}
+          renderPlaceholder={renderPlaceholder}
+          settleDelay={settleDelay}
           leaving
           start={rect}
           exit={swipe.engine.swiped.get(l.key)}

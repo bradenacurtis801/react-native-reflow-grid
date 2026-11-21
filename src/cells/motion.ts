@@ -9,3 +9,6 @@ export const ENTER_SCALE = 0.6;
 export const LIFT_SCALE = 1.06;
 /** A dragged item's slot dims to this, to show where it will land. */
 export const DRAGGED_OPACITY = 0.35;
+
+/** How long a cell must keep an item before it's drawn (`settleDelay`'s default): longer than a cell lasts under a fast scroll, shorter than the eye minds. */
+export const SETTLE_DELAY = 150;

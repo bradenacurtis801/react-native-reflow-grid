@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, type MutableRefObject, type ReactNode } from 'react';
+import { memo, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode } from 'react';
 import { StyleSheet } from 'react-native';
 import Animated, {
   Easing,
@@ -12,7 +12,7 @@ import Animated, {
 import { runOnJS } from 'react-native-worklets';
 
 import type { Rect, Size } from '../layout';
-import { DRAGGED_OPACITY, ENTER_SCALE, LEAVE_MS, LEAVE_SCALE, LIFT_SCALE, MOVE } from './motion';
+import { DRAGGED_OPACITY, ENTER_SCALE, LEAVE_MS, LEAVE_SCALE, LIFT_SCALE, MOVE, SETTLE_DELAY } from './motion';
 import { placeAtOnce } from './placeBatch';
 import { perfLog } from '../support/perfLog';
 import { SWIPE_EXIT_MS, type SwipeDirection } from '../swipe/swipe';
@@ -24,6 +24,9 @@ export interface CellProps<T> {
   /** Its place in what's shown; -1 once it's leaving. */
   index: number;
   renderItem: (item: T, info: ItemRenderInfo) => ReactNode;
+  /** Shown instead of `renderItem` until the cell has kept its item for `settleDelay` (see `ReflowGridProps`). */
+  renderPlaceholder?: (item: T, info: ItemRenderInfo) => ReactNode;
+  settleDelay?: number;
   /** Where it goes — absent once it's leaving: it stays where it is. */
   rect?: Rect;
   /** Where it starts from when it's mounted: its last slot, so a move that was under way carries on. */
@@ -261,6 +264,28 @@ function useCellStyle(v: CellValues, f: FingerValues, swipeAxis: 'x' | 'y') {
   });
 }
 
+const nothing = () => null;
+
+/**
+ * Whether the cell has kept its item for `delay`ms. It has at once for the item it mounted with, and `immediate` (lifted or
+ * leaving: it must show) and a zero delay skip the wait. Each cell keeps its own clock, so a jump that gives every cell another
+ * item draws them all together when it ends, and a scroll that goes on never does.
+ */
+function useSettled(id: string, delay: number, immediate: boolean) {
+  const [settledId, setSettledId] = useState(id);
+  const skip = immediate || delay <= 0;
+  useEffect(() => {
+    if (settledId === id) return;
+    if (skip) {
+      setSettledId(id);
+      return;
+    }
+    const timer = setTimeout(() => setSettledId(id), delay);
+    return () => clearTimeout(timer);
+  }, [id, settledId, delay, skip]);
+  return settledId === id || skip;
+}
+
 /** An item's visuals. Drawn again only when what it's drawn from changes, not whenever the grid renders. */
 function ItemContentImpl<T>({
   item,
@@ -295,6 +320,8 @@ function sameCell(a: CellProps<unknown>, b: CellProps<unknown>): boolean {
     a.item === b.item &&
     a.index === b.index &&
     a.renderItem === b.renderItem &&
+    a.renderPlaceholder === b.renderPlaceholder &&
+    a.settleDelay === b.settleDelay &&
     sameRect(a.rect, b.rect) &&
     a.leaving === b.leaving &&
     a.dragging === b.dragging &&
@@ -328,6 +355,8 @@ function ReflowCellImpl<T>({
   exit,
   onGone,
   reduceMotion,
+  renderPlaceholder,
+  settleDelay = SETTLE_DELAY,
 }: CellProps<T>) {
   const move = useMemo<Move>(() => ({ ...MOVE, reduceMotion }), [reduceMotion]);
   const v = useCellValues(start ?? rect, appear);
@@ -347,6 +376,7 @@ function ReflowCellImpl<T>({
   else liftedSize.current = undefined;
 
   const style = useCellStyle(v, f, swipeAxis);
+  const settled = useSettled(id, settleDelay, leaving || dragging || floating);
 
   return (
     <Animated.View
@@ -364,7 +394,7 @@ function ReflowCellImpl<T>({
         height={leaving ? 0 : (liftedSize.current?.height ?? rect?.height ?? 0)}
         dragging={dragging}
         swipe={v.swipe}
-        renderItem={renderItem}
+        renderItem={settled ? renderItem : (renderPlaceholder ?? nothing)}
       />
     </Animated.View>
   );

@@ -67,6 +67,19 @@ export interface ReflowGridProps<T> {
   keyExtractor: (item: T, index: number) => string;
   /** One item's visuals: they fill the cell the layout gives it. */
   renderItem: (item: T, info: ItemRenderInfo) => ReactNode;
+  /**
+   * What a cell shows while it waits to draw its item (see `settleDelay`): a patch of colour, the card's outline. Nothing
+   * by default. It's called with the item the cell now has, and should be cheap.
+   */
+  renderPlaceholder?: (item: T, info: ItemRenderInfo) => ReactNode;
+  /**
+   * How long, in milliseconds, a cell that's been given another item must keep it before `renderItem` is called for it
+   * (`renderPlaceholder` until then). In a fast scroll or a jump the cells are given other items again and again, faster
+   * than anyone can see them, and drawing each one (an image asking to load, say) is what slows the scroll; a cell that
+   * doesn't keep its item this long is never drawn. A cell is drawn at once the first time, and while it's lifted or
+   * leaving. Default 150; 0 draws every item as soon as its cell has it.
+   */
+  settleDelay?: number;
   /** One item's pressable parts (see `TouchRegion`). Memoize it with the rest. */
   touchRegions?: (item: T, info: ItemInfo) => TouchRegion[];
   /** Memoize it: a new function lays everything out again. */

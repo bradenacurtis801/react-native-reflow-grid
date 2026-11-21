@@ -82,6 +82,7 @@ Memoize `layout` and `touchRegions`: a new function lays everything out again.
 | Prop | Description |
 | --- | --- |
 | `data`, `keyExtractor`, `renderItem` | As in a list. Keys decide who stays, enters and leaves. |
+| `settleDelay`, `renderPlaceholder` | A cell that's given another item (it scrolled into view, or you jumped) calls `renderItem` only once it has kept that item for `settleDelay` ms (default `150`; `0` draws at once). Until then it shows `renderPlaceholder` (nothing by default; keep it cheap). In a fast scroll or a drag of the scroll bar the cells get other items faster than anyone sees them, and drawing each one (an image asking to load, a video player) is what slows the scroll: a cell that doesn't hold its item this long is never drawn. The first draw of a cell, and a lifted or leaving item, aren't held back. |
 | `layout` | A `ReflowLayout` (see below). Memoize it. |
 | `touchRegions` | Pressable parts of an item. |
 | `axis` | `'vertical'` (default), `'horizontal'`, or `'both'`. |
