@@ -10,6 +10,8 @@ import { Button, CONTROLS_BOTTOM, controls } from './ui';
 
 const GAP = 8;
 const HEART_HIT = 48;
+/** Room the buttons pinned along the top take over a grid. */
+const CONTROLS_TOP_ROOM = 56;
 
 interface Photo {
   id: number;
@@ -22,9 +24,14 @@ interface Photo {
 const photos = (from: number, count: number): Photo[] =>
   Array.from({ length: count }, (_, i) => ({ id: from + i, ratio: poolRatio((from + i) % POOL), liked: false }));
 
-/** Remote images of different shapes in two columns: each cell's height follows from its photo. */
+/**
+ * Remote images of different shapes in 2-4 columns, scrolling down, or in 2-4 rows, scrolling sideways: each cell's size
+ * follows from its photo (its height from the column's width, or its width from the row's height).
+ */
 function PhotosTab({ onMounted }: TabProps) {
   const [items, setItems] = useState(() => photos(1, 60));
+  const [flow, setFlow] = useState<'columns' | 'rows'>('columns');
+  const [lines, setLines] = useState(2);
   const next = useRef(61);
 
   // The whole pool, asked for at once, in the order the first cards need them: one batch, so by the time a fling is over the
@@ -35,7 +42,15 @@ function PhotosTab({ onMounted }: TabProps) {
     void Image.prefetch(urls, 'memory-disk').then((ok) => logPhoto(`prefetched the pool of ${POOL} ${ok ? 'ok' : 'with a failure'} in ${Math.round(performance.now() - at)}ms`));
   }, []);
 
-  const layout = useMemo<ReflowLayout<Photo>>(() => masonryLayout({ columns: 2, gap: GAP, heightOf: (p, width) => width * p.ratio }), []);
+  // `ratio` is height ÷ width: a column hands a photo its width, a row its height.
+  const layout = useMemo<ReflowLayout<Photo>>(
+    () =>
+      flow === 'columns'
+        ? masonryLayout({ columns: lines, gap: GAP, heightOf: (p, width) => width * p.ratio })
+        : masonryLayout({ flow: 'horizontal', rows: lines, gap: GAP, widthOf: (p, height) => height / p.ratio }),
+    [flow, lines],
+  );
+  const rows = flow === 'rows';
   const like = useCallback((id: number) => setItems((all) => all.map((p) => (p.id === id ? { ...p, liked: !p.liked } : p))), []);
   const remove = useCallback((id: number) => setItems((all) => all.filter((p) => p.id !== id)), []);
   const reorder = useCallback(({ keys }: { keys: readonly string[] }) => {
@@ -84,10 +99,12 @@ function PhotosTab({ onMounted }: TabProps) {
         data={items}
         keyExtractor={(p) => String(p.id)}
         layout={layout}
-        startInset={8}
-        endInset={CONTROLS_BOTTOM}
-        crossStartInset={GAP}
-        crossEndInset={GAP}
+        axis={rows ? 'horizontal' : 'vertical'}
+        // Along the scroll the content clears the buttons above and below (vertical), or the screen's sides (horizontal).
+        startInset={rows ? GAP : CONTROLS_TOP_ROOM}
+        endInset={rows ? GAP : CONTROLS_BOTTOM}
+        crossStartInset={rows ? CONTROLS_TOP_ROOM : GAP}
+        crossEndInset={rows ? CONTROLS_BOTTOM : GAP}
         onMounted={onMounted}
         onReorder={reorder}
         onSwipe={(p) => remove(p.id)}
@@ -95,6 +112,13 @@ function PhotosTab({ onMounted }: TabProps) {
         renderItem={renderItem}
         renderPlaceholder={renderPlaceholder}
       />
+      <View style={controls.top} pointerEvents="box-none">
+        <Button label="Columns" on={!rows} onPress={() => setFlow('columns')} />
+        <Button label="Rows" on={rows} onPress={() => setFlow('rows')} />
+        {[2, 3, 4].map((n) => (
+          <Button key={n} label={String(n)} on={lines === n} onPress={() => setLines(n)} />
+        ))}
+      </View>
       <View style={controls.bottom} pointerEvents="box-none">
         <Text style={controls.count}>{items.length} photos</Text>
         <Button label="Add 20" onPress={() => add(20)} />
