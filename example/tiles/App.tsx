@@ -50,8 +50,9 @@ export default function App() {
     });
   }, []);
   const add = (count: number) => {
-    setItems((all) => [...all, ...tiles(next.current, count)]);
+    const from = next.current;
     next.current += count;
+    setItems((all) => [...all, ...tiles(from, count)]);
   };
   const reset = () => {
     setItems(tiles(1, COUNT));

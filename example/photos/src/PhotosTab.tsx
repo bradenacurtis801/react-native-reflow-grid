@@ -67,8 +67,10 @@ function PhotosTab({ onMounted }: TabProps) {
     [like, remove],
   );
   const add = (count: number) => {
-    setItems((all) => [...all, ...photos(next.current, count)]);
+    // Read before the update runs: it runs later, when the render comes, and by then `next` has moved on.
+    const from = next.current;
     next.current += count;
+    setItems((all) => [...all, ...photos(from, count)]);
   };
   // Stable, so a card is drawn again only when its own photo or place changes, not whenever the tab renders.
   const renderItem = useCallback(

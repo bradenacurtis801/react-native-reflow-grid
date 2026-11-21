@@ -42,8 +42,9 @@ function VideosTab({ onMounted }: TabProps) {
     [remove],
   );
   const add = (count: number) => {
-    setItems((all) => [...all, ...clips(next.current, count)]);
+    const from = next.current;
     next.current += count;
+    setItems((all) => [...all, ...clips(from, count)]);
   };
   const toggleAutoplay = () => {
     setPlayback('videos:', !autoplay);
