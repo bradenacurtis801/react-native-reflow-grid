@@ -25,6 +25,11 @@ export interface PageIndicatorOptions {
 /** The touch area of the dots reaches this far (pt) beyond them, so a fingertip can find them. */
 export const DOTS_HIT = 14;
 
+/** The page a scroll position is on: the nearest whole one. */
+export function pageOf(pages: { count: number; stride: number }, along: number): number {
+  return pages.count > 0 && pages.stride > 0 ? Math.min(Math.max(Math.round(along / pages.stride), 0), pages.count - 1) : 0;
+}
+
 /** A dot of a page that isn't on screen is this fraction of the size of the one that is. */
 export const INACTIVE_SCALE = 0.7;
 
