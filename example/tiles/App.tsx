@@ -3,7 +3,7 @@ import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { ReduceMotion } from 'react-native-reanimated';
 import { gridLayout, masonryLayout, pagedLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
 
-type Arrangement = 'grid' | 'list' | 'masonry' | 'row' | 'rows' | 'fixed' | 'hpages' | 'vpages';
+type Arrangement = 'grid' | 'list' | 'masonry' | 'row' | 'rows' | 'hmasonry' | 'fixed' | 'hpages' | 'vpages';
 
 const ARRANGEMENTS: { label: string; value: Arrangement }[] = [
   { label: '3 cols', value: 'grid' },
@@ -11,6 +11,7 @@ const ARRANGEMENTS: { label: string; value: Arrangement }[] = [
   { label: 'Masonry', value: 'masonry' },
   { label: '1 row', value: 'row' },
   { label: '2 rows', value: 'rows' },
+  { label: 'Masonry rows', value: 'hmasonry' },
   { label: 'Fixed', value: 'fixed' },
   { label: 'H pages', value: 'hpages' },
   { label: 'V pages', value: 'vpages' },
@@ -25,7 +26,7 @@ const REMOVE_HIT = 40;
 const TOP = 150;
 const BOTTOM = 96;
 
-/** Height ÷ width of a masonry tile, by its number: a spread that repeats, so the columns come out uneven. */
+/** Height ÷ width of a masonry tile, by its number: a spread that repeats, so the columns come out uneven (and, turned on its side, the rows). */
 const MASONRY_RATIOS = [1.3, 0.8, 1, 1.55, 0.9, 1.2, 1.7, 0.7];
 
 interface Tile {
@@ -76,6 +77,9 @@ export default function App() {
           const height = (room.height - GAP) / 2;
           return gridLayout({ flow: 'horizontal', lines: 2, gap: GAP, card: { aspect: width / height } })(data, room);
         };
+      // The same on its side: three rows of tiles of different widths, each after the shortest row so far.
+      case 'hmasonry':
+        return masonryLayout<Tile>({ flow: 'horizontal', rows: 3, gap: GAP, widthOf: (t, height) => height / MASONRY_RATIOS[t.id % MASONRY_RATIOS.length]! });
       // Fixed on both axes: five 300 × 240 columns are wider than the screen, so the grid scrolls both ways.
       case 'fixed':
         return gridLayout({ flow: 'vertical', lines: 5, gap: GAP, card: { width: 300, height: 240 } });
@@ -99,7 +103,7 @@ export default function App() {
     [remove],
   );
 
-  const horizontal = arrangement === 'row' || arrangement === 'rows' || arrangement === 'hpages';
+  const horizontal = arrangement === 'row' || arrangement === 'rows' || arrangement === 'hmasonry' || arrangement === 'hpages';
   // A page is the whole room: no inset, so the grid sits between the controls by margin instead.
   const paged = arrangement === 'hpages' || arrangement === 'vpages';
 

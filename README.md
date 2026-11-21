@@ -7,7 +7,7 @@ A grid for React Native where **items glide to their new places** when one is ad
 
 - **Windowed.** Off-screen items exist only as slots in the layout; just what's visible (plus a buffer) is mounted.
 - **Animated reflow.** Remove an item and it shrinks away while the rest spring into the gap. Change the layout (3 columns → 1, vertical → horizontal) and everything glides.
-- **Pluggable layouts.** A layout is just `(data, container) => { size, rectOf, indicesIn }`: it sees the items, so it can depend on their sizes. `gridLayout` covers grids, lists and strips, `masonryLayout` columns of items of any height; write your own for anything else.
+- **Pluggable layouts.** A layout is just `(data, container) => { size, rectOf, indicesIn }`: it sees the items, so it can depend on their sizes. `gridLayout` covers grids, lists and strips, `masonryLayout` columns (or, scrolling sideways, rows) of items of any size; write your own for anything else.
 - **Drag to reorder.** Hold an item (or drag it with a mouse on web) and the others glide aside to make room. Dragging scrolls at the edges and turns pages. See [Drag to reorder](#drag-to-reorder).
 - **Paged layouts.** `pagedLayout` snaps to pages, with page dots you can tap or scrub, as in a home screen.
 - **Reliable multi-touch.** Presses are decided by the grid, not by per-item `Pressable`, so a second finger's tap isn't dropped while another finger holds the responder.
@@ -101,7 +101,7 @@ Memoize `layout` and `touchRegions`: a new function lays everything out again.
 
 ### `masonryLayout(options)`
 
-Columns of equal width, items of any height: each item goes under the shortest column so far.
+Columns of equal width, items of any height: each item goes under the shortest column so far. Or, with `flow: 'horizontal'`, rows of equal height, items of any width, for a grid that scrolls sideways: each item goes after the shortest row so far.
 
 ```ts
 import { masonryLayout } from 'react-native-reflow-grid';
@@ -112,13 +112,24 @@ const layout = useMemo(
 );
 ```
 
+```ts
+// Three rows of photos of any width, scrolling sideways: <ReflowGrid axis="horizontal" ... />
+const layout = useMemo(
+  () => masonryLayout<Photo>({ flow: 'horizontal', rows: 3, gap: 8, widthOf: (photo, height) => height * photo.aspect }),
+  [],
+);
+```
+
 | Option | Description |
 | --- | --- |
-| `columns` | How many columns share the room's width. |
+| `flow` | `'vertical'` (default): columns, scrolled down. `'horizontal'`: rows, scrolled along (use `axis="horizontal"`). |
+| `columns` | Vertical flow: how many columns share the room's width (any whole number of 1 or more). |
+| `rows` | Horizontal flow: how many rows share the room's height. |
 | `gap` | A number, or `{ x, y }`. Default `0`. |
-| `heightOf` | `(item, width, index) => height`: an item's height, given the width its column gives it. It must depend only on its arguments. |
+| `heightOf` | Vertical flow: `(item, width, index) => height`: an item's height, given the width its column gives it. It must depend only on its arguments. |
+| `widthOf` | Horizontal flow: `(item, height, index) => width`: an item's width, given the height its row gives it. The same rule. |
 
-The layout remembers its last result: when `data` changes, the items before the first one that differs (by reference) keep their places and `heightOf` isn't asked about them again. Adding at the end, or changing one item far down a long list, costs only what follows. So replace an item to change its height; changing it in place isn't noticed. A change of the container's width places everything again. Memoize the layout, as a new one starts with nothing remembered.
+The layout remembers its last result: when `data` changes, the items before the first one that differs (by reference) keep their places and `heightOf` (or `widthOf`) isn't asked about them again. Adding at the end, or changing one item far down a long list, costs only what follows. So replace an item to change its height; changing it in place isn't noticed. A change of the container's size across the lines (the width for columns, the height for rows) places everything again. Memoize the layout, as a new one starts with nothing remembered.
 
 ### `pagedLayout(options)`
 
@@ -160,7 +171,7 @@ Write `rectOf` and `indicesIn` yourself when you can work them out without a pas
 
 Two small Expo apps in [`example/`](example), each on its own:
 
-- [`example/tiles`](example/tiles): the grid itself. Switch between 3 columns, a list, masonry, one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it, holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
+- [`example/tiles`](example/tiles): the grid itself. Switch between 3 columns, a list, masonry (columns, or rows that scroll sideways), one or two rows, pages, and a fixed-size two-axis grid; drag a tile to reorder it, holding it at an edge to scroll or turn the page; add or remove tiles (tap the ✕, with as many fingers as you like); add 300 and watch the mounted count stay small.
 - [`example/photos`](example/photos): real content. Remote photos in a masonry grid and a grid of playing videos (it adds `expo-image` and `expo-video`), with like and remove as `touchRegions`, and a meter of the JS and UI frame rates and the cells mounted.
 
 ```sh

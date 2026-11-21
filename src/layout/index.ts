@@ -186,21 +186,23 @@ export function gridLayout(options: GridLayoutOptions): ReflowLayout {
 /** What a masonry layout keeps from its last call, to carry on from. */
 interface MasonryBuilt<T> {
   data: readonly T[];
-  /** The width a column had. */
-  width: number;
+  /** The size a line (a column, or a row) had across. */
+  line: number;
   rects: Rect[];
-  /** The column each item went in. */
-  columnOf: number[];
-  /** Where each column's next item would go before item `64 × j`, for each `j` (and `end`: after the last). */
+  /** The line each item went in. */
+  lineOf: number[];
+  /** Where each line's next item would go before item `64 × j`, for each `j` (and `end`: after the last). */
   checkpoints: number[][];
   end: number[];
   result: ReflowResult;
 }
 
-/** A masonry layout keeps where the columns stood before every this many items, to start again from the one before a change. */
+/** A masonry layout keeps where the lines stood before every this many items, to start again from the one before a change. */
 const MASONRY_CHECKPOINT = 64;
 
 export interface MasonryLayoutOptions<T> {
+  /** Columns share the room's width; items go down them. The default. */
+  flow?: 'vertical';
   /** How many columns share the room's width. */
   columns: number;
   /** Between items: one number for both axes, or each. @default 0 */
@@ -215,26 +217,48 @@ export interface MasonryLayoutOptions<T> {
   heightOf: (item: T, width: number, index: number) => number;
 }
 
+export interface MasonryRowsLayoutOptions<T> {
+  /** Rows share the room's height; items go along them. Scroll horizontally (`axis="horizontal"`). */
+  flow: 'horizontal';
+  /** How many rows share the room's height. */
+  rows: number;
+  /** Between items: one number for both axes, or each. @default 0 */
+  gap?: number | { x: number; y: number };
+  /**
+   * An item's width, given the height its row gives it (a photo's aspect ratio, a label's length…). Like `heightOf`, it
+   * must depend only on its arguments, and an item is replaced, not changed in place, to change its width.
+   */
+  widthOf: (item: T, height: number, index: number) => number;
+}
+
 /**
- * Columns of equal width, items of any height: each item goes under the
- * shortest column so far (the leftmost, on a tie), in order. Vertical scroll.
+ * Lines of equal size, items of any length: each item goes after the shortest line so far (the first, on a tie), in order.
+ * Columns, down which a vertical scroll goes (`flow: 'vertical'`, the default; give `heightOf`), or rows, along which a
+ * horizontal scroll goes (`flow: 'horizontal'`; give `widthOf`).
  *
  * It remembers its last result. When `data` changes, the items before the first
- * one that differs (by reference) keep their places and `heightOf` is not asked
+ * one that differs (by reference) keep their places and `heightOf` (or `widthOf`) is not asked
  * about them again, so adding at the end, or changing one item far down a long
- * list, costs only what follows. A change of the room's width places everything
+ * list, costs only what follows. A change of the room's size across the lines places everything
  * again. Memoize the layout: a new one starts with nothing remembered.
  */
-export function masonryLayout<T>({ columns, gap: gapOption, heightOf }: MasonryLayoutOptions<T>): ReflowLayout<T> {
-  if (!Number.isInteger(columns) || columns < 1) throw new Error(`masonryLayout: columns must be a whole number of 1 or more, got ${columns}`);
-  const gap = typeof gapOption === 'number' ? { x: gapOption, y: gapOption } : (gapOption ?? { x: 0, y: 0 });
+export function masonryLayout<T>(options: MasonryLayoutOptions<T> | MasonryRowsLayoutOptions<T>): ReflowLayout<T> {
+  const horizontal = options.flow === 'horizontal';
+  const lines = horizontal ? (options as MasonryRowsLayoutOptions<T>).rows : (options as MasonryLayoutOptions<T>).columns;
+  const lengthOf = horizontal ? (options as MasonryRowsLayoutOptions<T>).widthOf : (options as MasonryLayoutOptions<T>).heightOf;
+  const name = horizontal ? 'rows' : 'columns';
+  if (!Number.isInteger(lines) || lines < 1) throw new Error(`masonryLayout: ${name} must be a whole number of 1 or more, got ${lines}`);
+  const gap = typeof options.gap === 'number' ? { x: options.gap, y: options.gap } : (options.gap ?? { x: 0, y: 0 });
+  // Across the lines, and along them (the way items are added, and the way the grid scrolls).
+  const gapAcross = horizontal ? gap.y : gap.x;
+  const gapAlong = horizontal ? gap.x : gap.y;
   let last: MasonryBuilt<T> | undefined;
 
   return (data, room) => {
-    const width = Math.max((room.width - (columns - 1) * gap.x) / columns, 0);
+    const line = Math.max(((horizontal ? room.height : room.width) - (lines - 1) * gapAcross) / lines, 0);
     // How many items from the start are as they were.
     let same = 0;
-    const prev = last && last.width === width ? last : undefined;
+    const prev = last && last.line === line ? last : undefined;
     if (prev) {
       const limit = Math.min(prev.data.length, data.length);
       while (same < limit && prev.data[same] === data[same]) same++;
@@ -242,8 +266,9 @@ export function masonryLayout<T>({ columns, gap: gapOption, heightOf }: MasonryL
     }
 
     const rects: Rect[] = prev ? prev.rects.slice(0, same) : [];
-    const columnOf: number[] = prev ? prev.columnOf.slice(0, same) : [];
-    // Where each column's next item goes, as it stood before item `same`: from the last checkpoint at or before it.
+    const lineOf: number[] = prev ? prev.lineOf.slice(0, same) : [];
+    const endOf = (rect: Rect) => (horizontal ? rect.x + rect.width : rect.y + rect.height) + gapAlong;
+    // Where each line's next item goes, as it stood before item `same`: from the last checkpoint at or before it.
     let next: number[];
     let checkpoints: number[][];
     if (prev && same > 0) {
@@ -251,30 +276,30 @@ export function masonryLayout<T>({ columns, gap: gapOption, heightOf }: MasonryL
       checkpoints = prev.checkpoints.slice(0, j + 1);
       next = same === prev.data.length ? prev.end.slice() : checkpoints[j]!.slice();
       if (same !== prev.data.length) {
-        for (let i = j * MASONRY_CHECKPOINT; i < same; i++) next[columnOf[i]!] = rects[i]!.y + rects[i]!.height + gap.y;
+        for (let i = j * MASONRY_CHECKPOINT; i < same; i++) next[lineOf[i]!] = endOf(rects[i]!);
       }
     } else {
       checkpoints = [];
-      next = new Array<number>(columns).fill(0);
+      next = new Array<number>(lines).fill(0);
     }
 
     for (let index = same; index < data.length; index++) {
       if (index % MASONRY_CHECKPOINT === 0) checkpoints[index / MASONRY_CHECKPOINT] = next.slice();
-      let column = 0;
-      for (let c = 1; c < columns; c++) if (next[c]! < next[column]!) column = c;
-      const height = heightOf(data[index]!, width, index);
-      const rect = { x: column * (width + gap.x), y: next[column]!, width, height };
-      next[column] = rect.y + height + gap.y;
+      let at = 0;
+      for (let c = 1; c < lines; c++) if (next[c]! < next[at]!) at = c;
+      const length = lengthOf(data[index]!, line, index);
+      const across = at * (line + gapAcross);
+      const rect = horizontal ? { x: next[at]!, y: across, width: length, height: line } : { x: across, y: next[at]!, width: line, height: length };
+      next[at] = endOf(rect);
       rects.push(rect);
-      columnOf.push(column);
+      lineOf.push(at);
     }
 
     const empty = data.length === 0;
-    const result = layoutFromRects(rects, {
-      width: empty ? 0 : columns * width + (columns - 1) * gap.x,
-      height: empty ? 0 : Math.max(...next) - gap.y,
-    });
-    last = { data, width, rects, columnOf, checkpoints, end: next, result };
+    const acrossSize = empty ? 0 : lines * line + (lines - 1) * gapAcross;
+    const alongSize = empty ? 0 : Math.max(...next) - gapAlong;
+    const result = layoutFromRects(rects, horizontal ? { width: alongSize, height: acrossSize } : { width: acrossSize, height: alongSize });
+    last = { data, line, rects, lineOf, checkpoints, end: next, result };
     return result;
   };
 }

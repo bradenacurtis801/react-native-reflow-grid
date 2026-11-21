@@ -465,3 +465,142 @@ describe('pagedLayout', () => {
     expect(() => pagedLayout({ direction: 'horizontal', columns: 2, rows: 2, card: { width: 0, height: 5 } })).toThrow();
   });
 });
+
+describe('masonryLayout, more than two columns', () => {
+  // 4 columns across a 230pt room with 10pt gaps: each is 50 wide.
+  const room = { width: 230, height: 600 };
+  const heights = [10, 20, 30, 40, 5, 5, 5, 5];
+  const layout = masonryLayout<number>({ columns: 4, gap: 10, heightOf: (h) => h });
+
+  it('puts each item under the shortest column so far, the leftmost on a tie', () => {
+    const rects = rectsOf(layout(heights, room), heights.length);
+    expect(rects.map((r) => [r.x, r.y, r.width, r.height])).toEqual([
+      [0, 0, 50, 10],
+      [60, 0, 50, 20],
+      [120, 0, 50, 30],
+      [180, 0, 50, 40],
+      [0, 20, 50, 5], // column 0 is the shortest (20 down)
+      [60, 30, 50, 5], // then column 1 (30)
+      [0, 35, 50, 5], // column 0 again (35)
+      [120, 40, 50, 5], // then column 2 (40)
+    ]);
+    expect(layout(heights, room).size).toEqual({ width: 230, height: 45 });
+  });
+});
+
+describe('masonryLayout, rows (horizontal flow)', () => {
+  // 2 rows down a 210pt room with a 10pt gap: each is 100 tall.
+  const room = { width: 600, height: 210 };
+  const widths = [50, 30, 20, 40, 10];
+  const layout = masonryLayout<number>({ flow: 'horizontal', rows: 2, gap: 10, widthOf: (w) => w });
+
+  it('puts each item after the shortest row so far', () => {
+    const rects = rectsOf(layout(widths, room), widths.length);
+    expect(rects.map((r) => [r.x, r.y, r.width, r.height])).toEqual([
+      [0, 0, 50, 100], // row 0 is now 60 along
+      [0, 110, 30, 100], // row 1 is now 40 along
+      [40, 110, 20, 100], // row 1 is shorter: now 70
+      [60, 0, 40, 100], // row 0 is shorter: now 110
+      [70, 110, 10, 100], // row 1 is shorter: now 90
+    ]);
+  });
+
+  it('sizes the content to the longest row, and the rows to the room', () => {
+    expect(layout(widths, room).size).toEqual({ width: 100, height: 210 });
+  });
+
+  it('hands each item the height its row gives it, and its index', () => {
+    const seen: [number, number, number][] = [];
+    masonryLayout<number>({ flow: 'horizontal', rows: 2, gap: 10, widthOf: (item, height, index) => (seen.push([item, height, index]), 10) })(
+      [7, 8],
+      room,
+    );
+    expect(seen).toEqual([
+      [7, 100, 0],
+      [8, 100, 1],
+    ]);
+  });
+
+  it('shares the room between its rows with the gap between them', () => {
+    const rects = rectsOf(masonryLayout<number>({ flow: 'horizontal', rows: 3, gap: { x: 4, y: 12 }, widthOf: () => 10 })(items(3), { width: 600, height: 324 }), 3);
+    expect(rects.map((r) => [r.y, r.height])).toEqual([
+      [0, 100],
+      [112, 100],
+      [224, 100],
+    ]);
+  });
+
+  it('finds the items in a region', () => {
+    const result = layout(widths, room);
+    expect(result.indicesIn({ x0: 65, x1: 200, y0: 0, y1: 210 })).toEqual([3, 4]);
+  });
+
+  it('is empty with no items', () => {
+    expect(layout([], room).size).toEqual({ width: 0, height: 0 });
+  });
+
+  it('refuses a row count that is not a whole number of 1 or more', () => {
+    expect(() => masonryLayout({ flow: 'horizontal', rows: 0, widthOf: () => 1 })).toThrow(/rows/);
+    expect(() => masonryLayout({ flow: 'horizontal', rows: 1.5, widthOf: () => 1 })).toThrow(/rows/);
+  });
+
+  it('is the vertical layout turned on its side', () => {
+    const lengths = Array.from({ length: 40 }, (_, i) => 15 + ((i * 29) % 70));
+    const across = masonryLayout<number>({ flow: 'horizontal', rows: 3, gap: { x: 7, y: 11 }, widthOf: (w) => w })(lengths, { width: 999, height: 340 });
+    const down = masonryLayout<number>({ columns: 3, gap: { x: 11, y: 7 }, heightOf: (h) => h })(lengths, { width: 340, height: 999 });
+    expect(across.size).toEqual({ width: down.size.height, height: down.size.width });
+    expect(rectsOf(across, 40)).toEqual(rectsOf(down, 40).map((r) => ({ x: r.y, y: r.x, width: r.height, height: r.width })));
+  });
+
+  describe('carrying on from the first change', () => {
+    interface Tile {
+      w: number;
+    }
+    const tile = (w: number): Tile => ({ w });
+    const counting = (rows = 3) => {
+      const asked: number[] = [];
+      const layout = masonryLayout<Tile>({ flow: 'horizontal', rows, gap: 10, widthOf: (t, _h, i) => (asked.push(i), t.w) });
+      return { layout, take: () => asked.splice(0) };
+    };
+    const room3 = { width: 800, height: 320 };
+    const fresh = (data: readonly Tile[], rows = 3) => masonryLayout<Tile>({ flow: 'horizontal', rows, gap: 10, widthOf: (t) => t.w })(data, room3);
+    const same = (a: ReflowResult, b: ReflowResult, n: number) => {
+      expect(a.size).toEqual(b.size);
+      expect(rectsOf(a, n)).toEqual(rectsOf(b, n));
+    };
+    // Enough of them to cross several of its checkpoints.
+    const tiles = Array.from({ length: 150 }, (_, i) => tile(20 + ((i * 37) % 80)));
+
+    it('asks only about what is added at the end', () => {
+      const { layout, take } = counting();
+      layout(tiles, room3);
+      expect(take()).toEqual(tiles.map((_, i) => i));
+      const more = [...tiles, tile(55), tile(65)];
+      const result = layout(more, room3);
+      expect(take()).toEqual([150, 151]);
+      same(result, fresh(more), more.length);
+    });
+
+    it('asks from the item that changed, not before it', () => {
+      const { layout, take } = counting();
+      layout(tiles, room3);
+      take();
+      for (const at of [0, 63, 64, 100, 149]) {
+        const changed = tiles.map((t, i) => (i === at ? tile(t.w + 33) : t));
+        const result = layout(changed, room3);
+        expect(take()).toEqual(Array.from({ length: 150 - at }, (_, k) => at + k));
+        same(result, fresh(changed), 150);
+        same(layout(tiles, room3), fresh(tiles), 150);
+        take();
+      }
+    });
+
+    it('places everything again when the room changes across the rows', () => {
+      const { layout, take } = counting();
+      layout(tiles, room3);
+      take();
+      layout(tiles, { width: 800, height: 400 });
+      expect(take()).toEqual(tiles.map((_, i) => i));
+    });
+  });
+});
