@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Platform, ScrollView, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { ReduceMotion, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from 'react-native-reanimated';
 
@@ -233,13 +233,15 @@ export function ReflowGrid<T>({
   useEffect(() => onMounted?.(settledCount), [settledCount]); // eslint-disable-line react-hooks/exhaustive-deps
   // A change in what's mounted, a new layout (a drag's preview reordered), or a slow render, and what the render and commit took (`perfLog`).
   const loggedCount = useRef(0);
+  const treeMs = useRef(0);
+  const bodyMs = useRef(0);
   const loggedPlaced = useRef(placed);
   useEffect(() => {
     if (!perfOn()) return;
     const took = now() - renderStart;
     const relaid = loggedPlaced.current !== placed;
     if (loggedCount.current !== mountedCount || relaid || took > 8) {
-      perfLog(`render ${took.toFixed(1)}ms cells ${loggedCount.current}→${mountedCount}${relaid ? ' re-laid-out' : ''}`);
+      perfLog(`render ${took.toFixed(1)}ms = grid ${bodyMs.current.toFixed(1)} + tree ${treeMs.current.toFixed(1)} + commit ${(took - bodyMs.current - treeMs.current).toFixed(1)}ms, cells ${loggedCount.current}→${mountedCount}${relaid ? ' re-laid-out' : ''}`);
     }
     loggedCount.current = mountedCount;
     loggedPlaced.current = placed;
@@ -327,7 +329,7 @@ export function ReflowGrid<T>({
     <Animated.View style={contentStyle}>{cells}</Animated.View>
   );
 
-  return (
+  const rootView = (
     <View
       ref={rootRef}
       // A sideways grid's frame stops short of the header and the footer, so its scroll view has no room to move across.
@@ -375,5 +377,14 @@ export function ReflowGrid<T>({
       </Scroller>
       {paging.dotsElement}
     </View>
+  );
+  bodyMs.current = now() - renderStart;
+  // With logging on, the time React spent rendering the tree (the rest of a render's time is the commit), for `perfLog`.
+  return perfOn() ? (
+    <Profiler id="reflow" onRender={(_id, _phase, actual) => (treeMs.current = actual)}>
+      {rootView}
+    </Profiler>
+  ) : (
+    rootView
   );
 }

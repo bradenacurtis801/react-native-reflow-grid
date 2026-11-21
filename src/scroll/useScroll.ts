@@ -5,7 +5,7 @@ import { runOnJS } from 'react-native-worklets';
 import type { Offset } from '../drag/dragEngine';
 import type { ReflowResult, Region, Size } from '../layout';
 import { pageOf } from './pageIndicator';
-import { perfLog, perfOn } from '../support/perfLog';
+import { now, perfLog, perfOn } from '../support/perfLog';
 
 /**
  * Cells within this many screens (of the grid's own width and height) beyond the
@@ -75,7 +75,16 @@ export function useScroll(p: {
   // Where the scroll is, in pages, fractional mid-swipe: the dots follow it on the UI thread.
   const pageProgress = useSharedValue(0);
   /** The scroll is at `next`: bring a render if what's on screen has changed. */
+  const lastReport = useRef({ at: 0, y: 0 });
   const track = (next: Offset) => {
+    if (perfOn()) {
+      // A long gap between the scroll view's reports means the JS thread was busy; a big jump, that the scroll moved by screens at once (a dragged indicator).
+      const at = now();
+      const gap = at - lastReport.current.at;
+      const jump = Math.abs(next.y - lastReport.current.y);
+      if (gap > 40 || jump > (viewport?.height ?? 0)) perfLog(`scroll report gap=${gap.toFixed(0)}ms jump=${jump.toFixed(0)}pt`);
+      lastReport.current = { at, y: next.y };
+    }
     offset.current = next;
     const pg = placed?.pages;
     if (pg) {
