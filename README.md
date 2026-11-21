@@ -64,7 +64,7 @@ const layout = useMemo(() => gridLayout({ flow: 'vertical', lines: 3, gap: 12 })
 />
 ```
 
-`renderItem` draws; it takes no touches. It's given `{ index, size, dragging }`; `dragging` is true for an item being dragged (its slot also dims). Pressable parts are declared in `touchRegions` (in the item's own space), and the grid fires `onPress` when a finger that went down inside one lifts without having moved.
+`renderItem` draws; it takes no touches. Keep it stable: define it outside the component, or wrap it in `useCallback`. A new function on every render makes every mounted item draw again each time your component renders, which is most of the cost of a removal in a long list of heavy items. It's given `{ index, size, dragging }`; `dragging` is true for an item being dragged (its slot also dims). Pressable parts are declared in `touchRegions` (in the item's own space), and the grid fires `onPress` when a finger that went down inside one lifts without having moved.
 
 Memoize `layout` and `touchRegions`: a new function lays everything out again.
 

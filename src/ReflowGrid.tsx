@@ -175,7 +175,7 @@ export function ReflowGrid<T>({
   );
 
   // The cells on screen: what's in the window, what's leaving, what waits to be reused (see `useCells.tsx`).
-  const cells = useCells<T>({
+  const { cells, leavingCount } = useCells<T>({
     data,
     items,
     layout,
@@ -224,7 +224,9 @@ export function ReflowGrid<T>({
   const innerStyle = useAnimatedStyle(() => ({ height: height.get() }));
 
   const mountedCount = cells.length;
-  useEffect(() => onMounted?.(mountedCount), [mountedCount]); // eslint-disable-line react-hooks/exhaustive-deps
+  // Reported without the cells shrinking away: removing an item changes it once, not as the cell starts to leave and again as it's gone.
+  const settledCount = mountedCount - leavingCount;
+  useEffect(() => onMounted?.(settledCount), [settledCount]); // eslint-disable-line react-hooks/exhaustive-deps
   // A change in what's mounted, a new layout (a drag's preview reordered), or a slow render, and what the render and commit took (`perfLog`).
   const loggedCount = useRef(0);
   const loggedPlaced = useRef(placed);

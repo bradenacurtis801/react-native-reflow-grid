@@ -108,6 +108,8 @@ export function useCells<T>(p: CellsInput<T>) {
   // The keys still in `data`: an item that's gone has no cell waiting for it.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const liveKeys = useMemo(() => new Set(data.map(keyExtractor)), [data]);
+  // How many of the cells are an item shrinking away: they're mounted, but not counted as settled (`onMounted`).
+  let leavingCount = 0;
   if (placed) {
     const w = windowNow();
     const wanted = (indices ?? []).map((index) => keyExtractor(items[index]!, index));
@@ -116,6 +118,7 @@ export function useCells<T>(p: CellsInput<T>) {
       const rect = lastRects.current.get(l.key);
       return !!rect && intersects(rect, w);
     });
+    leavingCount = leavingShown.length;
     const was = shape.current;
     const changed = was.layout !== layout || was.data !== data || was.roomWidth !== roomWidth || was.roomHeight !== roomHeight;
     shape.current = { layout, data, roomWidth, roomHeight };
@@ -195,5 +198,5 @@ export function useCells<T>(p: CellsInput<T>) {
     for (const slot of [...drawn.current.keys()]) if (!inUse.has(slot)) drawn.current.delete(slot);
   }
   slots.current = slotList;
-  return cells;
+  return { cells, leavingCount };
 }

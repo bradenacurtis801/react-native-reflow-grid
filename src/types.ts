@@ -93,7 +93,10 @@ export interface ReflowGridProps<T> {
    */
   crossStartInset?: number;
   crossEndInset?: number;
-  /** How many cells are mounted, after each change of them. */
+  /**
+   * How many cells are mounted, after each change of them. A cell that is shrinking away because its
+   * item was removed isn't counted, so a removal changes it once, not once as the cell starts to leave and again as it ends.
+   */
   onMounted?: (count: number) => void;
   /**
    * Turns on drag to reorder: on web with a mouse through the browser's drag and
