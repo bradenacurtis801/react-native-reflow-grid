@@ -7,6 +7,20 @@ export const rand = (n: number): number => {
 /** A photo of the given size; the same seed is the same photo. */
 export const photoUri = (seed: number, width: number, height: number) => `https://picsum.photos/seed/${seed}/${Math.round(width)}/${Math.round(height)}`;
 
+/**
+ * The photos the demo draws from: a pool, which cards cycle through, so after the first pass every photo is one that has
+ * been loaded and cached already. A fresh image takes the host a second or more to make, which is longer than a card is
+ * on screen in a fling, so a demo of unique photos would sit on patches of colour. A real feed's thumbnails are cached and
+ * served fast; this is how the demo gets the same.
+ */
+export const POOL = 48;
+/** A pooled photo is asked for at one size, whatever the grid makes of its card, so its address is always the same: it can be fetched ahead, and a second sight of it is a cache hit. */
+export const PHOTO_WIDTH = 720;
+/** A pooled photo's shape: height ÷ width. */
+export const poolRatio = (slot: number) => 0.7 + rand(slot) * 0.9;
+/** Where a pooled photo is. */
+export const poolUri = (slot: number) => photoUri(slot, PHOTO_WIDTH, Math.round(PHOTO_WIDTH * poolRatio(slot)));
+
 /** Short public clips, a megabyte or so each. */
 export const VIDEOS = [
   'https://interactive-examples.mdn.mozilla.net/media/cc0-videos/flower.mp4',

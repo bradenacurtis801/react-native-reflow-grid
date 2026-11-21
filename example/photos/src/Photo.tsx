@@ -1,6 +1,7 @@
 import { Image, type ImageStyle } from 'expo-image';
 import type { StyleProp } from 'react-native';
 import { hueOf, photoUri } from './data';
+import { usePhotoLog } from './photoLog';
 
 /**
  * A remote photo as a grid cell wants it: a patch of colour until it loads
@@ -9,8 +10,10 @@ import { hueOf, photoUri } from './data';
  * at once instead of loading again.
  */
 export function Photo({ seed, width, height, style }: { seed: number; width: number; height: number; style?: StyleProp<ImageStyle> }) {
+  const events = usePhotoLog(seed, photoUri(seed, width, height));
   return (
     <Image
+      {...events}
       source={{ uri: photoUri(seed, width, height) }}
       style={[{ backgroundColor: hueOf(seed) }, style]}
       contentFit="cover"

@@ -1,8 +1,10 @@
-import { memo, useCallback, useMemo, useRef, useState } from 'react';
+import { Image } from 'expo-image';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 import { masonryLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
-import { rand } from './data';
+import { hueOf, PHOTO_WIDTH, POOL, poolRatio, poolUri } from './data';
 import { Photo } from './Photo';
+import { logPhoto } from './photoLog';
 import type { TabProps } from './types';
 import { Button, CONTROLS_BOTTOM, controls } from './ui';
 
@@ -16,13 +18,22 @@ interface Photo {
   liked: boolean;
 }
 
+/** A card's photo is one of the pool, `id % POOL`: it cycles, so what's been loaded is seen again (see `POOL`). */
 const photos = (from: number, count: number): Photo[] =>
-  Array.from({ length: count }, (_, i) => ({ id: from + i, ratio: 0.7 + rand(from + i) * 0.9, liked: false }));
+  Array.from({ length: count }, (_, i) => ({ id: from + i, ratio: poolRatio((from + i) % POOL), liked: false }));
 
 /** Remote images of different shapes in two columns: each cell's height follows from its photo. */
 function PhotosTab({ onMounted }: TabProps) {
   const [items, setItems] = useState(() => photos(1, 60));
   const next = useRef(61);
+
+  // The whole pool, asked for at once, in the order the first cards need them: one batch, so by the time a fling is over the
+  // photos are already on the device. (The cards then ask for the same addresses, and find them.)
+  useEffect(() => {
+    const urls = Array.from({ length: POOL }, (_, i) => poolUri((i + 1) % POOL));
+    const at = performance.now();
+    void Image.prefetch(urls, 'memory-disk').then((ok) => logPhoto(`prefetched the pool of ${POOL} ${ok ? 'ok' : 'with a failure'} in ${Math.round(performance.now() - at)}ms`));
+  }, []);
 
   const layout = useMemo<ReflowLayout<Photo>>(() => masonryLayout({ columns: 2, gap: GAP, heightOf: (p, width) => width * p.ratio }), []);
   const like = useCallback((id: number) => setItems((all) => all.map((p) => (p.id === id ? { ...p, liked: !p.liked } : p))), []);
@@ -46,9 +57,9 @@ function PhotosTab({ onMounted }: TabProps) {
   };
   // Stable, so a card is drawn again only when its own photo or place changes, not whenever the tab renders.
   const renderItem = useCallback(
-    (p: Photo, { size }: { size: { width: number; height: number } }) => (
+    (p: Photo) => (
       <View style={styles.card}>
-        <Photo seed={p.id} width={size.width * 2} height={size.height * 2} style={StyleSheet.absoluteFill} />
+        <Photo seed={p.id % POOL} width={PHOTO_WIDTH} height={Math.round(PHOTO_WIDTH * p.ratio)} style={StyleSheet.absoluteFill} />
         <View style={styles.caption}>
           <Text style={styles.captionText}>Photo {p.id}</Text>
         </View>
@@ -62,6 +73,9 @@ function PhotosTab({ onMounted }: TabProps) {
     ),
     [],
   );
+
+  // What a cell shows while it waits to draw its photo (see `settleDelay`): the card's outline, in the photo's colour.
+  const renderPlaceholder = useCallback((p: Photo) => <View style={[styles.card, { backgroundColor: hueOf(p.id % POOL) }]} />, []);
 
   return (
     <View style={styles.root}>
@@ -79,6 +93,7 @@ function PhotosTab({ onMounted }: TabProps) {
         onSwipe={(p) => remove(p.id)}
         touchRegions={touchRegions}
         renderItem={renderItem}
+        renderPlaceholder={renderPlaceholder}
       />
       <View style={controls.bottom} pointerEvents="box-none">
         <Text style={controls.count}>{items.length} photos</Text>
