@@ -2,6 +2,7 @@ import { useCallback, useMemo, useRef, useState, type ComponentRef } from 'react
 import { Keyboard, Share, StyleSheet, Text, useWindowDimensions, View } from 'react-native';
 import { Easing, ReduceMotion, useAnimatedReaction, useSharedValue, withTiming } from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
+import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { gridLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
 import { Backdrop } from './src/Backdrop';
 import { OverviewBars, PageBars } from './src/Bars';
@@ -26,9 +27,11 @@ export default function App() {
   const { width, height } = useWindowDimensions();
   const metrics = useMemo(() => makeMetrics(width, height), [width, height]);
   return (
-    <MetricsContext.Provider value={metrics}>
-      <Tabs />
-    </MetricsContext.Provider>
+    <GestureHandlerRootView style={styles.root}>
+      <MetricsContext.Provider value={metrics}>
+        <Tabs />
+      </MetricsContext.Provider>
+    </GestureHandlerRootView>
   );
 }
 
@@ -54,6 +57,8 @@ function Tabs() {
   // How far the page has grown (0: its card, 1: the screen), and whether its bars are away (they follow its scroll).
   const p = useSharedValue(0);
   const hidden = useSharedValue(0);
+  // 1, and less as the open page is pinched in: the bars follow it.
+  const squeeze = useSharedValue(1);
   // The page is on its way back into its card.
   const shrinking = useSharedValue(false);
   // Each card's preview, to measure where the page grows from.
@@ -89,6 +94,7 @@ function Tabs() {
       busy.current = true;
       preview.measureInWindow((x, y, w, h) => {
         hidden.set(0);
+        squeeze.set(1);
         shrinking.set(false);
         p.set(0);
         setLast(tab);
@@ -97,7 +103,7 @@ function Tabs() {
         p.set(withTiming(1, GROW, (done) => done && runOnJS(grown)()));
       });
     },
-    [p, hidden, grown, shrinking, scrollY, offsets],
+    [p, hidden, squeeze, grown, shrinking, scrollY, offsets],
   );
 
   const closePage = useCallback(() => {
@@ -167,9 +173,11 @@ function Tabs() {
   );
 
   // Stable, so a card is drawn again only when its own tab or place changes (or a page's saved scroll position does).
+  // The card of the tab that's open is hidden: its page is out of it, and a page and its own card never show together.
+  const openId = open?.tab.id;
   const renderItem = useCallback(
     (t: Tab) => (
-      <View style={styles.slot}>
+      <View style={[styles.slot, t.id === openId && styles.away]}>
         <View
           ref={(node) => {
             if (node) previews.current.set(t.id, node);
@@ -191,7 +199,7 @@ function Tabs() {
         </View>
       </View>
     ),
-    [offsets, cardW, cardH],
+    [offsets, cardW, cardH, openId],
   );
   // What a card shows while it waits to draw its page (see `settleDelay`).
   const renderPlaceholder = useCallback(
@@ -226,9 +234,9 @@ function Tabs() {
           renderPlaceholder={renderPlaceholder}
         />
       </View>
-      {open ? <PageOverlay tab={open.tab} frame={open.frame} p={p} hidden={hidden} scrollY={scrollY} initialY={offsets[open.tab.id] ?? 0} expanded={expanded} reloads={reloads} /> : null}
+      {open ? <PageOverlay tab={open.tab} frame={open.frame} p={p} hidden={hidden} scrollY={scrollY} squeeze={squeeze} onPinchClose={closePage} initialY={offsets[open.tab.id] ?? 0} expanded={expanded} reloads={reloads} /> : null}
       <OverviewBars p={p} count={tabs.length} isPrivate={isPrivate} onGroup={switchGroup} active={!open} query={query} onQuery={setQuery} onNew={addTab} onDone={done} />
-      <PageBars p={p} hidden={hidden} host={open?.tab.host ?? ''} active={expanded} onTabs={closePage} onReload={reload} onShare={share} onHost={setHost} />
+      <PageBars p={p} hidden={hidden} squeeze={squeeze} host={open?.tab.host ?? ''} active={expanded} onTabs={closePage} onReload={reload} onShare={share} onHost={setHost} />
     </View>
   );
 }
@@ -238,6 +246,7 @@ const styles = StyleSheet.create({
   grid: { flex: 1 },
   cards: { flex: 1, marginHorizontal: SIDE },
   slot: { flex: 1 },
+  away: { opacity: 0 },
   preview: { borderRadius: CARD_RADIUS, backgroundColor: '#262a33' },
   close: { position: 'absolute', top: 8, right: 8, width: 30, height: 30, borderRadius: 15, alignItems: 'center', justifyContent: 'center', backgroundColor: 'rgba(30,33,41,0.78)' },
   closeMark: { color: '#fff', fontSize: 14, fontWeight: '700' },

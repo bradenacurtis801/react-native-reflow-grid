@@ -75,9 +75,10 @@ export function OverviewBars({ p, count, isPrivate, onGroup, active, query, onQu
  * The bars over an open page: the address pill, and back, forward, share, bookmarks and tabs. They arrive as the page opens, and
  * follow the page's scroll: `hidden` goes to 1 as it scrolls down (the bar slides away, the pill shrinks) and back to 0 as it scrolls up.
  */
-export function PageBars({ p, hidden, host, active, onTabs, onReload, onShare, onHost }: { p: SharedValue<number>; hidden: SharedValue<number>; host: string; active: boolean; onTabs: () => void; onReload: () => void; onShare: () => void; onHost: (host: string) => void }) {
+export function PageBars({ p, hidden, squeeze, host, active, onTabs, onReload, onShare, onHost }: { p: SharedValue<number>; hidden: SharedValue<number>; squeeze: SharedValue<number>; host: string; active: boolean; onTabs: () => void; onReload: () => void; onShare: () => void; onHost: (host: string) => void }) {
   const { width, pillTop, barBottom } = useMetrics();
-  const arrive = useAnimatedStyle(() => ({ opacity: interpolate(p.get(), [0.55, 1], [0, 1], Extrapolation.CLAMP) }));
+  // They fade as the page grows, and as it's pinched in (`squeeze`).
+  const arrive = useAnimatedStyle(() => ({ opacity: interpolate(p.get(), [0.55, 1], [0, 1], Extrapolation.CLAMP) * squeeze.get() }));
   // The pill collapses about its middle, as Safari's does, to just the domain (its width, and the padding either side) and
   // PILL_HEIGHT_END of its height (measured from Safari's frames). It's the frame that shrinks, not a scale, so the text keeps its size.
   const hostWidth = useSharedValue(0);
