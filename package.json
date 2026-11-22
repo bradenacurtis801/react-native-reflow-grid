@@ -1,6 +1,6 @@
 {
   "name": "react-native-reflow-grid",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A windowed, animated grid for React Native: items glide into place when added, removed or re-laid-out, and multi-touch presses never get dropped.",
   "keywords": [
     "react-native",
