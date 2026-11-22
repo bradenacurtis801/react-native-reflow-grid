@@ -98,6 +98,7 @@ Every option, and how to write your own, is in [docs/layouts.md](https://github.
 | `haptics` | Feedback for the grid's moments. **On by default**: with `expo-haptics` installed the grid taps when an item is lifted (medium), taps lightly as it moves to another slot and on a drop that changed the order, and ticks (the lightest feedback) when a page turns during a drag or you scrub the page dots. Without `expo-haptics`, and on web, it does nothing. `false` turns it off; a function `(event) => void` gets each moment (`'lift' \| 'move' \| 'drop' \| 'pageTurn' \| 'scrub'`) to give feedback with whatever you use. The frequent ones (`move`, `scrub`) are limited to one every 60 / 50 ms. |
 | `onDragStart` | Called with the drag's `DragSession` (what was lifted) when a drag begins. |
 | `onMounted` | Called with how many cells are mounted after each change. |
+| `onScroll` | Called as the grid scrolls, with `{ x, y }`: how far it has scrolled from where it rests (`0, 0` at the start, whatever the insets and platform). It runs on the JS thread on each scroll event, so keep it cheap. To tell what's on screen, run your `layout` on your data and look up the items at that offset. |
 
 ## Guides
 

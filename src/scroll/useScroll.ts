@@ -44,8 +44,10 @@ export function useScroll(p: {
   lifted: number;
   /** A drag is on (for the log). */
   dragging: boolean;
+  /** The app's `onScroll`: told how far the grid has scrolled from rest. */
+  onScroll?: (offset: Offset) => void;
 }) {
-  const { axis, ios, android, padded, insetX, insetY, crossStart, viewport, placed, lifted, dragging } = p;
+  const { axis, ios, android, padded, insetX, insetY, crossStart, viewport, placed, lifted, dragging, onScroll } = p;
   const mainHorizontal = axis === 'horizontal';
 
   // iOS rests at minus the start inset (the header's space, drawn over). Android pads instead, and rests at 0.
@@ -86,6 +88,8 @@ export function useScroll(p: {
       lastReport.current = { at, y: next.y };
     }
     offset.current = next;
+    // From where it rests: iOS rests at minus the start inset, the others at 0.
+    onScroll?.({ x: next.x + (ios ? insetX.start : 0), y: next.y + (ios ? insetY.start : 0) });
     const pg = placed?.pages;
     if (pg) {
       const along = pg.direction === 'horizontal' ? next.x : next.y;

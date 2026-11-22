@@ -69,6 +69,7 @@ export function ReflowGrid<T>({
   crossStartInset = 0,
   crossEndInset = 0,
   onMounted,
+  onScroll,
   onReorder,
   canDrag,
   onDragStart,
@@ -133,7 +134,7 @@ export function ReflowGrid<T>({
   );
 
   // Where it's scrolled to, and what that puts on screen (see `useScroll.ts`).
-  const scroll = useScroll({ axis, ios, android, padded, insetX, insetY, crossStart, viewport, placed, lifted, dragging: drag != null });
+  const scroll = useScroll({ axis, ios, android, padded, insetX, insetY, crossStart, viewport, placed, lifted, dragging: drag != null, onScroll });
   const { offset, contentOf, windowOf } = scroll;
 
   // A finger's drag lifts the item itself, which follows the finger: a cell follows these.

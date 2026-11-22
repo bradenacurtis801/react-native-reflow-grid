@@ -112,6 +112,13 @@ export interface ReflowGridProps<T> {
    */
   onMounted?: (count: number) => void;
   /**
+   * Called as the grid scrolls (and when something else moves it, such as a drag at the edge), with how far it has
+   * scrolled from where it rests: `{ x: 0, y: 0 }` at the start, whatever the insets and platform. It runs on the JS thread
+   * on each scroll event, so keep it cheap. To know what's on screen, run the layout on your own data
+   * (`layout(data, size)`) and look up the items at that offset.
+   */
+  onScroll?: (offset: { x: number; y: number }) => void;
+  /**
    * Turns on drag to reorder: on web with a mouse through the browser's drag and
    * drop, and with a finger anywhere by holding on an item to lift it. The others
    * make room as it's dragged. Called on a drop that changed the order,
