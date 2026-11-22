@@ -30,7 +30,7 @@ function Btn({ onPress, children, dim }: { onPress?: () => void; children: React
 }
 
 /** The bars over the tab overview: a pill to search the tabs, and a bar to add a tab, count them and finish. They fade as a tab opens. */
-export function OverviewBars({ p, count, active, query, onQuery, onNew, onDone }: { p: SharedValue<number>; count: number; active: boolean; query: string; onQuery: (text: string) => void; onNew: () => void; onDone: () => void }) {
+export function OverviewBars({ p, count, isPrivate, onGroup, active, query, onQuery, onNew, onDone }: { p: SharedValue<number>; count: number; isPrivate: boolean; onGroup: () => void; active: boolean; query: string; onQuery: (text: string) => void; onNew: () => void; onDone: () => void }) {
   const { pillTop, barBottom } = useMetrics();
   const fade = useAnimatedStyle(() => ({ opacity: interpolate(p.get(), [0, 0.45], [1, 0], Extrapolation.CLAMP) }));
   return (
@@ -56,7 +56,13 @@ export function OverviewBars({ p, count, active, query, onQuery, onNew, onDone }
         <Btn onPress={onNew}>
           <Plus />
         </Btn>
-        <Text style={styles.count} pointerEvents="none">{count} {count === 1 ? 'Tab' : 'Tabs'}</Text>
+        {/* The group of tabs: tap to go to the other (Private Browsing, or the ordinary tabs). */}
+        <View pointerEvents="box-none" style={styles.group}>
+          <Pressable onPress={onGroup} hitSlop={8} style={styles.groupButton}>
+            <Text style={styles.count}>{isPrivate ? 'Private' : `${count} ${count === 1 ? 'Tab' : 'Tabs'}`}</Text>
+            <View style={styles.caret} />
+          </Pressable>
+        </View>
         <Btn onPress={onDone}>
           <Text style={styles.done}>Done</Text>
         </Btn>
@@ -142,7 +148,11 @@ const styles = StyleSheet.create({
   toolbarFill: { height: BAR_H, paddingHorizontal: 10, justifyContent: 'space-between' },
   cell: { minWidth: 52, height: 44, alignItems: 'center', justifyContent: 'center' },
   searchInput: { minWidth: 120, color: INK, fontSize: 17, padding: 0, textAlign: 'center' },
-  count: { position: 'absolute', left: 0, right: 0, textAlign: 'center', color: INK, fontSize: 16, fontWeight: '600' },
+  // Spans the bar so the button sits in its middle, but takes no touches itself: the buttons either side stay pressable.
+  group: { position: 'absolute', left: 0, right: 0, alignItems: 'center' },
+  groupButton: { flexDirection: 'row', alignItems: 'center', gap: 6 },
+  count: { color: INK, fontSize: 16, fontWeight: '600' },
+  caret: { width: 7, height: 7, marginTop: -3, borderLeftWidth: 1.75, borderBottomWidth: 1.75, borderColor: INK, transform: [{ rotate: '-45deg' }] },
   done: { color: INK, fontSize: 17, fontWeight: '700' },
   aa: { color: INK, fontSize: 15, fontWeight: '600' },
   measure: { position: 'absolute', opacity: 0, fontSize: 16, fontWeight: '600', alignSelf: 'flex-start' },

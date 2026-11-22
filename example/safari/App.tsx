@@ -3,11 +3,13 @@ import { Keyboard, Share, StyleSheet, Text, useWindowDimensions, View } from 're
 import { Easing, ReduceMotion, useAnimatedReaction, useSharedValue, withTiming } from 'react-native-reanimated';
 import { runOnJS } from 'react-native-worklets';
 import { gridLayout, ReflowGrid, type ReflowLayout } from 'react-native-reflow-grid';
+import { Backdrop } from './src/Backdrop';
 import { OverviewBars, PageBars } from './src/Bars';
 import { CARD_RADIUS, GAP, makeMetrics, MetricsContext, SIDE, TITLE_H, useMetrics } from './src/metrics';
 import { PageOverlay, type Frame } from './src/PageOverlay';
 import { Snapshot } from './src/Snapshot';
 import { makeTabs, type Tab } from './src/tabs';
+import { useHues } from './src/useHues';
 
 /** How a page grows out of its card and back: a timed ease, with no bounce. */
 const GROW = { duration: 340, easing: Easing.inOut(Easing.cubic), reduceMotion: ReduceMotion.Never };
@@ -32,8 +34,13 @@ export default function App() {
 
 function Tabs() {
   const { columns, cardW, cardH, gridTop, gridBottom } = useMetrics();
-  const [tabs, setTabs] = useState(() => makeTabs(1, 12));
-  const next = useRef(13);
+  // Two groups of tabs, and which one the overview shows: Safari's Private Browsing is a group of its own.
+  const [groups, setGroups] = useState(() => ({ normal: makeTabs(1, 12), private: makeTabs(13, 3) }));
+  const next = useRef(16);
+  const [isPrivate, setPrivate] = useState(false);
+  const group = isPrivate ? 'private' : 'normal';
+  const tabs = groups[group];
+  const setTabs = useCallback((update: (all: Tab[]) => Tab[]) => setGroups((g) => ({ ...g, [group]: update(g[group]) })), [group]);
   const [open, setOpen] = useState<Open | null>(null);
   // The page has grown to the whole screen (it scrolls, its bars are live), or is on its way back.
   const [expanded, setExpanded] = useState(false);
@@ -53,18 +60,18 @@ function Tabs() {
   const previews = useRef(new Map<number, ComponentRef<typeof View>>());
   const busy = useRef(false);
 
-  const remove = useCallback((id: number) => setTabs((all) => all.filter((t) => t.id !== id)), []);
+  const remove = useCallback((id: number) => setTabs((all) => all.filter((t) => t.id !== id)), [setTabs]);
   const reorder = useCallback(({ keys }: { keys: readonly string[] }) => {
     setTabs((all) => {
       const byId = new Map(all.map((t) => [String(t.id), t]));
       return keys.flatMap((k) => byId.get(k) ?? []);
     });
-  }, []);
+  }, [setTabs]);
   const addTab = useCallback(() => {
     const from = next.current;
     next.current += 1;
     setTabs((all) => [...all, ...makeTabs(from, 1)]);
-  }, []);
+  }, [setTabs]);
 
   const grown = useCallback(() => {
     setExpanded(true);
@@ -134,13 +141,22 @@ function Tabs() {
   const setHost = useCallback((host: string) => {
     setOpen((o) => (o ? { ...o, tab: { ...o.tab, host } } : o));
     setTabs((all) => all.map((t) => (t.id === open?.tab.id ? { ...t, host } : t)));
-  }, [open]);
+  }, [open, setTabs]);
+  // The count in the toolbar switches between the two groups.
+  const switchGroup = useCallback(() => {
+    setPrivate((on) => !on);
+    setQuery('');
+  }, []);
   const reload = useCallback(() => setReloads((n) => n + 1), []);
 
   const layout = useMemo<ReflowLayout<Tab>>(
     () => gridLayout({ flow: 'vertical', lines: columns, gap: GAP, card: { aspect: cardW / (cardH + TITLE_H) } }),
     [columns, cardW, cardH],
   );
+
+  // The backdrop takes the colours of the cards in the middle of the screen.
+  const { hues, onScroll } = useHues(layout, shown);
+
   // The ✕ comes first: where regions overlap, the first one a touch lands in is the one pressed.
   const touchRegions = useCallback(
     (t: Tab, { size }: { size: { width: number; height: number } }) => [
@@ -189,6 +205,7 @@ function Tabs() {
 
   return (
     <View style={styles.root}>
+      <Backdrop isPrivate={isPrivate} hues={hues} />
       {/* A finger moving over the grid (a scroll, or a drag) puts the search field's keyboard away. While a page is open the grid
           is under it and takes no touches, so a drag on the page can't also move the grid. */}
       <View style={styles.grid} pointerEvents={open ? 'none' : 'auto'} onTouchMove={Keyboard.dismiss}>
@@ -199,6 +216,7 @@ function Tabs() {
           layout={layout}
           startInset={gridTop}
           endInset={gridBottom}
+          onScroll={onScroll}
           onReorder={query ? undefined : reorder}
           onSwipe={(t) => remove(t.id)}
           swipeDirections={['left']}
@@ -209,7 +227,7 @@ function Tabs() {
         />
       </View>
       {open ? <PageOverlay tab={open.tab} frame={open.frame} p={p} hidden={hidden} scrollY={scrollY} initialY={offsets[open.tab.id] ?? 0} expanded={expanded} reloads={reloads} /> : null}
-      <OverviewBars p={p} count={tabs.length} active={!open} query={query} onQuery={setQuery} onNew={addTab} onDone={done} />
+      <OverviewBars p={p} count={tabs.length} isPrivate={isPrivate} onGroup={switchGroup} active={!open} query={query} onQuery={setQuery} onNew={addTab} onDone={done} />
       <PageBars p={p} hidden={hidden} host={open?.tab.host ?? ''} active={expanded} onTabs={closePage} onReload={reload} onShare={share} onHost={setHost} />
     </View>
   );
