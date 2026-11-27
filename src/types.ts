@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 import type { StyleProp, ViewStyle } from 'react-native';
 import type { ReduceMotion, SharedValue } from 'react-native-reanimated';
-import type { DragResult, DragSession } from './drag/drag';
+import type { DragResult, DragSession, JoinPolicy, JoinResult } from './drag/drag';
 import type { HapticsOption } from './support/haptics';
 import type { Rect, ReflowLayout, Size } from './layout';
 import type { PageIndicatorOptions } from './scroll/pageIndicator';
@@ -12,6 +12,8 @@ export interface ItemInfo {
   size: Size;
   /** It's being dragged: its slot shows where it will land. */
   dragging: boolean;
+  /** A dragged item is held on it, and a drop now would join them (see `onJoin`). */
+  joinTarget: boolean;
 }
 
 /** What `renderItem` is given about an item. */
@@ -92,6 +94,17 @@ export interface ReflowGridProps<T> {
    */
   axis?: 'vertical' | 'horizontal' | 'both';
   /**
+   * The size the grid is going to be, if it's known ahead: it then draws its cells in its first render, instead of after
+   * it has been laid out, which leaves it empty for a frame or more. For a grid that appears in an animation (an opening
+   * folder). Its real size takes over once it's laid out. Read when the grid mounts.
+   */
+  initialSize?: Size;
+  /**
+   * Whether a finger can scroll the grid. `false` is for one whose items all fit and should stay put, as a dock's: no
+   * scroll and no bounce. Dragging and presses work as before. @default true
+   */
+  scrollEnabled?: boolean;
+  /**
    * Space the scrolled items must start and end clear of — the header over
    * the top (`startInset`), the tab bar under the bottom (`endInset`), along
    * the vertical axis (or the horizontal one, for a horizontal grid). The grid
@@ -128,6 +141,46 @@ export interface ReflowGridProps<T> {
   onReorder?: (result: DragResult) => void;
   /** Whether an item can be dragged. @default every item can */
   canDrag?: (item: T, index: number) => boolean;
+  /**
+   * What each item is when it comes to joining: dropping one onto another to combine them, as apps into a folder. With
+   * `onJoin` (and `onReorder`, which turns dragging on), an item held on one that accepts its `kind` makes it the
+   * `joinTarget`, and a drop joins them instead of reordering. Outside its zone the others make room at once, and on
+   * the side the dragged one comes from the item stays where it is, so it can still be moved onto. Called during a drag: keep it cheap.
+   */
+  joinPolicy?: (item: T, info: ItemInfo) => JoinPolicy | undefined;
+  /**
+   * A drop joined the dragged item to another: change `data` here, taking the dragged item out (it's seen to go into the
+   * target) and updating the target. If the two become an item with a new key, return that key: it takes the target's place
+   * with no animation of one leaving and another arriving. Return `false` to refuse, and the item goes back.
+   */
+  onJoin?: (result: JoinResult) => string | false | void;
+  /**
+   * A finger's drag has stayed on an item it could join (the `joinTarget`) for long enough to ask for it to be opened.
+   * Open it, with the dragged item moved into it, and render a grid there with `continuesDrag`: the drag goes on in that
+   * grid, and a drop places the item. Return `false` to open nothing; return the key of what's now in the target's place
+   * if that changed. Needs a `ReflowDragProvider` around both grids.
+   */
+  onSpringLoad?: (result: JoinResult) => string | false | void;
+  /**
+   * A finger's drag has stayed outside the grid (`dragExitDelay`), as out of an open folder, or over another grid: `point`
+   * is where the finger is, on screen. Move the dragged item to where it goes next; return `false` to keep the drag here. A grid with `continuesDrag` that has the item takes the drag
+   * over. Keep this grid mounted (out of sight) until the provider's `onDragEnd`: the touch is still its. Needs a
+   * `ReflowDragProvider`.
+   */
+  onDragExit?: (result: { session: DragSession; dragged: readonly string[]; point: { x: number; y: number } }) => false | void;
+  /**
+   * How long, in ms, a drag stays outside the grid before `onDragExit` is called. Short for neighbours that exchange items
+   * (a dock and the pages above it), long enough elsewhere that a finger can stray out and back. @default 450
+   */
+  dragExitDelay?: number;
+  /**
+   * Takes over a drag that another grid of the provider has let go of (`onSpringLoad`), if the item is in this grid's
+   * `data`. Set it once the grid is where it will stay (not while it's still growing into place). `'join'`: it also takes
+   * over for an item it doesn't have, only to join it (`joinPolicy`, `onJoin`, `onSpringLoad`): nothing makes room, as on
+   * a dock that's full. The item is then still in the grid it came from, for `onJoin` or `onSpringLoad` to move.
+   * @default false
+   */
+  continuesDrag?: boolean | 'join';
   /**
    * Whether an item lifted by a finger may be drawn outside the grid. `'visible'`: from the lift until it has settled
    * after the drop, the grid doesn't clip what it draws, so the item can be carried anywhere (over a bar or another

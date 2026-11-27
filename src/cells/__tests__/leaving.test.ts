@@ -36,6 +36,10 @@ describe('leavingAfter', () => {
     expect(keys(result)).toContain('1');
   });
 
+  it('does not see an item go that another has taken the place of', () => {
+    expect(keys(leavingAfter(items('a', 'b', 'c'), items('x', 'c'), [], keyOf, (k) => k === 'b'))).toEqual(['a']);
+  });
+
   it('has everything leaving when data is emptied', () => {
     expect(keys(leavingAfter(items('a', 'b'), [], [], keyOf))).toEqual(['a', 'b']);
   });

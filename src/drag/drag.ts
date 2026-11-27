@@ -1,4 +1,4 @@
-import type { Region, ReflowResult } from '../layout';
+import type { Rect, Region, ReflowResult } from '../layout';
 
 /** A point in the content's own coordinates. */
 export interface Point {
@@ -46,6 +46,8 @@ export interface DragState {
   target: number;
   /** `keys` with the dragged items moved to `target`. */
   preview: readonly string[];
+  /** The item the dragged ones would be combined with by a drop now (see `JoinPolicy`). */
+  join?: string;
 }
 
 /** What a finished drag changed. */
@@ -59,6 +61,74 @@ export interface DragResult {
   /** Where the first of them was, and where it is now. */
   from: number;
   to: number;
+}
+
+/**
+ * What an item is when it comes to joining (dropping one item onto another to
+ * combine them). It's data, so it can be known ahead of a drag.
+ */
+export interface JoinPolicy {
+  /** What the item is, to the items it's dragged onto. */
+  kind: string;
+  /** The kinds that can be dropped onto it. None: it can't be joined. */
+  accepts?: readonly string[];
+  /**
+   * Where on the item a drop joins it, from its top-left. The rest of its slot
+   * is for putting an item before or after it. @default the middle, `JOIN_INSET` in from each side
+   */
+  zone?: Rect;
+}
+
+/** What a drop that joined gave. */
+export interface JoinResult {
+  /** The drag: what was lifted. */
+  session: DragSession;
+  /** The keys of the items that were dragged. */
+  dragged: readonly string[];
+  /** The key of the item they were dropped onto. */
+  target: string;
+}
+
+/** The default join zone leaves this fraction of the slot, at each side, to inserting. */
+export const JOIN_INSET = 0.2;
+
+/** Whether every one of the dragged items can be dropped onto the target. */
+export function canJoin(dragged: readonly (JoinPolicy | undefined)[], target: JoinPolicy): boolean {
+  const accepts = target.accepts;
+  return !!accepts && dragged.length > 0 && dragged.every((d) => !!d && accepts.includes(d.kind));
+}
+
+/** The join zone of the item in the slot `rect`, in the content's space. */
+export function joinZone(rect: Rect, zone?: Rect): Rect {
+  if (zone) return { x: rect.x + zone.x, y: rect.y + zone.y, width: zone.width, height: zone.height };
+  return { x: rect.x + rect.width * JOIN_INSET, y: rect.y + rect.height * JOIN_INSET, width: rect.width * (1 - 2 * JOIN_INSET), height: rect.height * (1 - 2 * JOIN_INSET) };
+}
+
+/** Whether the point is in the rect. */
+export function within(rect: Rect, point: Point): boolean {
+  return point.x >= rect.x && point.x < rect.x + rect.width && point.y >= rect.y && point.y < rect.y + rect.height;
+}
+
+/** Whether the items next to the one at `index` are beside it (a row), rather than above and below (a list). */
+function inRow(layout: ReflowResult, count: number, index: number): boolean {
+  const { y } = layout.rectOf(index);
+  return [index - 1, index + 1].some((i) => i >= 0 && i < count && Math.abs(layout.rectOf(i).y - y) < 1);
+}
+
+/**
+ * Where the dragged item goes with the pointer by the item in slot `index`, one it could join, but outside that item's join
+ * `zone`. `target` is where the dragged item is now. Past the zone, on the far side of it, the dragged item takes the slot.
+ * Anywhere else it goes next to the item on the side it's on already: the others make room at once, and the item stays
+ * where it is, so it can still be moved onto.
+ */
+export function besideTarget(layout: ReflowResult, count: number, index: number, target: number, point: Point, zone: Rect): number {
+  // Beyond the last item there's nothing to stay clear of: the end.
+  if (index === count - 1 && !within(layout.rectOf(index), point)) return index;
+  const from = target < index;
+  const past = inRow(layout, count, index)
+    ? from ? point.x >= zone.x + zone.width : point.x < zone.x
+    : from ? point.y >= zone.y + zone.height : point.y < zone.y;
+  return past ? index : from ? index - 1 : index + 1;
 }
 
 /** How far past a slot's edges (as a fraction of its smaller side) the finger can go before the target moves off it. */
@@ -152,7 +222,11 @@ export function beginDrag(keys: readonly string[], session: DragSession): DragSt
  * The same state comes back when the target hasn't changed.
  */
 export function updateDrag(state: DragState, layout: ReflowResult, point: Point, hysteresis = HYSTERESIS): DragState {
-  const target = hoverIndex(layout, state.keys.length, point, state.target, hysteresis) ?? state.target;
+  return moveTarget(state, hoverIndex(layout, state.keys.length, point, state.target, hysteresis) ?? state.target);
+}
+
+/** The state with the dragged items at `target`. The same state comes back when they're there. */
+export function moveTarget(state: DragState, target: number): DragState {
   if (target === state.target) return state;
   // A block of several can't start past the last of the others: `moveKeys` clamps it.
   return { ...state, target, preview: moveKeys(state.keys, state.dragged, target) };

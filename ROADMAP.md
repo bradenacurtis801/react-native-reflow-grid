@@ -2,16 +2,16 @@
 
 ## Joining and dragging between grids
 
-*Proposed: none of this is built, and the names may change.* The aim is what a home screen does: drop an app on another to make a folder, hold it over a folder until the folder opens, and drag between the pages, the dock and an open folder. It's built on the JavaScript drag there is today, so it doesn't wait for the native drivers, which would later feed the same core.
+*Joining (step 1) is built, and a version of steps 2 and 3: `ReflowDragProvider`, `onSpringLoad`, `onDragExit`, `continuesDrag`, with the provider's layer drawing the item from when it leaves its grid to the drop. Grids exchange items by the app moving them in `data` as the drag crosses, not yet by `dragGroup`, `dropPolicy`, `onInsert` and `onRemove` as below. The rest is proposed, and its names may change.* The aim is what a home screen does: drop an app on another to make a folder, hold it over a folder until the folder opens, and drag between the pages, the dock and an open folder. It's built on the JavaScript drag there is today, so it doesn't wait for the native drivers, which would later feed the same core.
 
-### 1. Joining, within one grid
+### 1. Joining, within one grid (built)
 
 Dropping an item onto another to combine them is opt-in. It's a second drop intent, `{ type: 'into', key }`, beside `{ type: 'insert', index }`.
 
 ```tsx
 <ReflowGrid
   joinPolicy={(item) => ({ kind: item.kind, accepts: ['app'], zone: ICON_RECT })}
-  onJoin={({ session, target }) => combine(session, target)}
+  onJoin={({ dragged, target }) => combine(dragged, target)}
   renderItem={(item, { joinTarget }) => <Icon entry={item} highlighted={joinTarget} />}
 />
 ```
@@ -19,7 +19,7 @@ Dropping an item onto another to combine them is opt-in. It's a second drop inte
 - **Off, the default:** the whole of every slot means insert, as today.
 - **On:** a slot whose item accepts what's dragged has a center zone and an edge band around it. In the center nothing reflows, and after a dwell the item is highlighted (`joinTarget`) and a drop reports `into`. A slot that doesn't accept it is a plain insert slot.
 - **Who can join whom is declarative.** `joinPolicy(item)` gives `{ kind, accepts, zone? }`; a dragged item can join a target when its `kind` is in the target's `accepts` (all of them, for several). `zone` is the center zone in the item's own space, like a touch region (a home screen's is the icon, not the name under it). It's data, not a callback, because a native drop delegate has to answer synchronously.
-- **The edge band waits too.** Inserting at once would move the target away from a finger on its way to the center. So in a slot that can be joined, the others make room only after the finger has rested in the edge band (about 200 ms). Zones belong to slots, which don't move; the item to join is whichever the preview shows in that slot.
+- **Beside the zone nothing waits.** On the side of an item the dragged one is on, the others make room up to it and it stays put; past its zone, the dragged one takes its slot. So the item to join is never moved away from a finger on its way onto it. Zones belong to slots, which don't move; the item to join is whichever the preview shows in that slot.
 - **`onJoin` changes `data`:** it takes the dragged item out and updates the target. If the combined item has a new key (two apps become a folder), `onJoin` returns it, and the new item takes the target's cell without one shrinking away and another growing in. The dragged item goes into the target rather than shrinking where it was.
 
 ### 2. Dragging between grids
@@ -33,6 +33,7 @@ Dropping an item onto another to combine them is opt-in. It's a second drop inte
 
 - **One drag, owned by the provider.** Today a `DragEngine` per grid both follows the pointer and works out where the item lands. It splits in two: the session (the pointer, what's lifted, the dwell), one per provider, and a target per grid (hit testing, preview order, edge scroll and page turns). A grid with no provider makes its own, and behaves as it does today.
 - **A layer above the grids.** The provider draws the lifted item over everything inside it, so it passes over any grid or overlay. (A native modal would still be above it.) The layer calls the source grid's `renderItem` again, so state held inside an item doesn't carry over: a playing video starts again.
+- **`dragOverflow` goes.** *Decided:* the layer replaces it, so it's removed in the change that adds the layer, and the home screen example moves to the provider then. It isn't released: a release before then leaves it out. If state lost to the second `renderItem` turns out to matter, that's solved in the layer, not by keeping both.
 - **Which grid.** Grids in the same `dragGroup` exchange items. Where two overlap (a folder open over the pages), `dropPriority` decides, and `dropEnabled={false}` takes a grid out. `dropPolicy` is declarative for the same reason `joinPolicy` is: the kinds a grid accepts, and how many items it holds.
 - **The preview.** The grid under the pointer opens a gap for the item, laying it out with its own `layout` (so keys are unique across a group, and its layout must cope with the item). The source closes up.
 - **The drop.** The item springs to its slot in the target, then the target draws it. The target's `onInsert({ session, index })` and the source's `onRemove({ session, keys })` are called together, so the app changes both in one render. A drop nowhere puts it back. `onReorder` stays what it is: a drop in the grid the item came from.
@@ -45,10 +46,8 @@ Dropping an item onto another to combine them is opt-in. It's a second drop inte
 
 ### To decide
 
-1. **Insert delay in joinable slots** (above). Proposed: yes, and only there, so plain reordering stays immediate.
-2. **What the lifted item looks like over another grid.** An icon from the pages has a name and one in the dock doesn't. Proposed: the source's `renderItem` throughout, the target's from the drop; later, perhaps, a flag in `renderItem`'s info for the grid it's over.
-3. **`dragOverflow`** (not yet released). With a provider the layer does its job. Either it ships for the single grid that wants its item's state kept, or it's dropped before the next release and a single grid uses a provider.
-4. **Web with a mouse.** The browser's drag and drop feeds the same session, but its drag image can't change size or open folders smoothly. Proposed: touch first.
+1. **What the lifted item looks like over another grid.** An icon from the pages has a name and one in the dock doesn't. Proposed: the source's `renderItem` throughout, the target's from the drop; later, perhaps, a flag in `renderItem`'s info for the grid it's over.
+2. **Web with a mouse.** The browser's drag and drop feeds the same session, but its drag image can't change size or open folders smoothly. Proposed: touch first.
 
 ## Native drag and drop
 
@@ -67,7 +66,7 @@ Drag works today through JavaScript (above). Using each platform's own drag-and-
 
 **Scope**
 
-- **Next:** joining within one grid, then dragging between grids, then folders that open under a drag (above), each tried in the home screen example; a configurable long-press and drag-handle regions; checking touch dragging on iOS and Android devices.
+- **Next:** the rest of dragging between grids and of folders under a drag (above: settle whether exchange by `onDragExit` stays, or step 2's declared groups replace it), each tried in the home screen example; a configurable long-press and drag-handle regions; checking touch dragging on iOS and Android devices.
 - **v1:** reorder inside one grid on iOS through the platform drag session, with typed payloads.
 - **v1.x:** lifting several items together, an external drop-zone API (trash, eject).
 - **Later:** Android native driver, drags between apps.

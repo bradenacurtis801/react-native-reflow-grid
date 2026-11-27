@@ -1,6 +1,7 @@
 export { ReflowGrid } from './ReflowGrid';
+export { ReflowDragProvider } from './drag/DragProvider';
 export type { ItemInfo, ItemRenderInfo, ReflowGridProps, TouchRegion } from './types';
-export type { DragItem, DragResult, DragSession } from './drag/drag';
+export type { DragItem, DragResult, DragSession, JoinPolicy, JoinResult } from './drag/drag';
 export type { HapticEvent, HapticsOption } from './support/haptics';
 export type { PageIndicatorOptions } from './scroll/pageIndicator';
 export type { SwipeDirection } from './swipe/swipe';

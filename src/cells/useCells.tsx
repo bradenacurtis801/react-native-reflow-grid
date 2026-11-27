@@ -6,6 +6,7 @@ import type { Leaving } from './leaving';
 import { ReflowCell } from './ReflowCell';
 import { SlotPool } from './slots';
 import type { SwipeEngine } from '../swipe/swipeEngine';
+import type { DragEngine } from '../drag/dragEngine';
 import type { Finger, ItemInfo, ItemRenderInfo, Slot, TouchRegion } from '../types';
 
 interface CellsInput<T> {
@@ -29,6 +30,11 @@ interface CellsInput<T> {
   draggedKeys: ReadonlySet<string>;
   floating: boolean;
   finger: Finger;
+  /** What the last drop joined (see `DragEngine.joined`), and the item a drop would join now. */
+  drags: Pick<DragEngine<T>, 'joined' | 'replaced'>;
+  joinKey?: string;
+  /** The item the carrier's layer is drawing: its cell is kept out of sight. */
+  carriedKey?: string;
   leaving: Leaving<T>[];
   /** What's leaving in this render, and whether `data` has just changed (see `useLeaving`). */
   leavingNow: Leaving<T>[];
@@ -53,7 +59,7 @@ interface CellsInput<T> {
 export function useCells<T>(p: CellsInput<T>) {
   const {
     data, items, layout, placed, roomWidth, roomHeight, indices, windowNow, keyExtractor, renderItem, renderPlaceholder, settleDelay, touchRegions,
-    draggedKeys, floating, finger, leaving, leavingNow, taking, setLeaving, swipe, swipeAxis, reduceMotion, cellNodes, slots,
+    draggedKeys, floating, finger, drags, joinKey, carriedKey, leaving, leavingNow, taking, setLeaving, swipe, swipeAxis, reduceMotion, cellNodes, slots,
   } = p;
 
   // Every key the grid has shown before this render: an item not among them is new, and grows in.
@@ -84,9 +90,10 @@ export function useCells<T>(p: CellsInput<T>) {
     (key: string) => {
       lastRects.current.delete(key);
       swipe.engine.swiped.delete(key);
+      drags.joined.delete(key);
       setLeaving((all) => all.filter((l) => l.key !== key));
     },
-    [swipe.engine, setLeaving],
+    [swipe.engine, drags, setLeaving],
   );
 
   // A leaving item that's off screen has nothing to animate: it's gone now.
@@ -94,7 +101,8 @@ export function useCells<T>(p: CellsInput<T>) {
     const w = windowNow();
     for (const l of leaving) {
       const rect = lastRects.current.get(l.key);
-      if (!rect || !intersects(rect, w)) gone(l.key);
+      // One that's going into another is seen on its way there, wherever its slot was.
+      if (!rect || (!drags.joined.has(l.key) && !intersects(rect, w))) gone(l.key);
     }
     // Only when a removal changes what's leaving.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,7 +126,7 @@ export function useCells<T>(p: CellsInput<T>) {
     // A leaving item is drawn while it's on screen.
     const leavingShown = leavingNow.filter((l) => {
       const rect = lastRects.current.get(l.key);
-      return !!rect && intersects(rect, w);
+      return !!rect && (drags.joined.has(l.key) || intersects(rect, w));
     });
     leavingCount = leavingShown.length;
     const was = shape.current;
@@ -136,7 +144,9 @@ export function useCells<T>(p: CellsInput<T>) {
       const item = items[index]!;
       const key = wanted[n]!;
       const rect = placed.rectOf(index);
-      const info: ItemInfo = { index, size: { width: rect.width, height: rect.height }, dragging: draggedKeys.has(key) };
+      const info: ItemInfo = { index, size: { width: rect.width, height: rect.height }, dragging: draggedKeys.has(key), joinTarget: key === joinKey };
+      // An item that took another's place in a join is there already: it doesn't grow in, or wait to be drawn.
+      const took = drags.replaced?.to === key;
       slotList.push({ key, index, rect, regions: touchRegions?.(item, info) ?? [] });
       const slot = slotOfWanted[n]!;
       const cell = (
@@ -147,11 +157,13 @@ export function useCells<T>(p: CellsInput<T>) {
           index={index}
           renderItem={renderItem}
           renderPlaceholder={renderPlaceholder}
-          settleDelay={settleDelay}
+          settleDelay={took ? 0 : settleDelay}
           rect={rect}
           start={lastRects.current.get(key)}
-          appear={settled.current && !knownKeys.current.has(key)}
+          appear={settled.current && !took && !knownKeys.current.has(key)}
           dragging={info.dragging}
+          joinTarget={info.joinTarget}
+          carried={key === carriedKey}
           floating={floating}
           finger={finger}
           cellNodes={cellNodes}
@@ -168,6 +180,11 @@ export function useCells<T>(p: CellsInput<T>) {
     for (const l of leavingShown) {
       const rect = lastRects.current.get(l.key)!;
       const slot = pool.current.slotFor(l.key);
+      // Joined to another: where on it, as that item is placed now, it goes.
+      const join = drags.joined.get(l.key);
+      const at = join ? items.findIndex((item, i) => keyExtractor(item, i) === join.into) : -1;
+      const target = join && at >= 0 ? placed.rectOf(at) : undefined;
+      const into = join && target ? { x: target.x + join.at.x, y: target.y + join.at.y } : undefined;
       const cell = (
         <ReflowCell
           key={slot === undefined ? `leave:${l.key}` : `slot:${slot}`}
@@ -180,6 +197,9 @@ export function useCells<T>(p: CellsInput<T>) {
           leaving
           start={rect}
           exit={swipe.engine.swiped.get(l.key)}
+          into={into}
+          // It leaves from where the finger had it.
+          finger={into ? finger : undefined}
           onGone={gone}
           cellNodes={cellNodes}
           swipes={swipe.swipes}

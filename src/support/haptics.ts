@@ -2,11 +2,12 @@
  * A moment the grid can give feedback for:
  *  - `lift`: an item is lifted to be dragged.
  *  - `move`: the dragged item has moved to another slot.
- *  - `drop`: it was dropped, and the order changed.
+ *  - `join`: it has been held on an item it can join, and a drop would now.
+ *  - `drop`: it was dropped, and the order changed or it joined an item.
  *  - `pageTurn`: a drag held at an edge has turned the page.
  *  - `scrub`: dragging along the page dots has reached another page.
  */
-export type HapticEvent = 'lift' | 'move' | 'drop' | 'pageTurn' | 'scrub';
+export type HapticEvent = 'lift' | 'move' | 'join' | 'drop' | 'pageTurn' | 'scrub';
 
 /**
  * Feedback for the grid's moments. `true` (the default): `expo-haptics`, when the
@@ -44,7 +45,7 @@ export function expoHaptics(load: () => ExpoHapticsLike | undefined): ((event: H
   };
   return (event) => {
     if (event === 'lift') fire(() => haptics.impactAsync(haptics.ImpactFeedbackStyle.Medium));
-    else if (event === 'move' || event === 'drop') fire(() => haptics.impactAsync(haptics.ImpactFeedbackStyle.Light));
+    else if (event === 'move' || event === 'join' || event === 'drop') fire(() => haptics.impactAsync(haptics.ImpactFeedbackStyle.Light));
     else fire(() => haptics.selectionAsync());
   };
 }

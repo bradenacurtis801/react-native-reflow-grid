@@ -1,4 +1,4 @@
-import { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Profiler, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { Platform, ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { ReduceMotion, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from 'react-native-reanimated';
 
@@ -17,6 +17,9 @@ import { usePaging } from './scroll/usePaging';
 import { useScroll } from './scroll/useScroll';
 import { useSwipeToRemove } from './swipe/useSwipeToRemove';
 import { attachWebDrag } from './drag/webDrag';
+import { DragContext } from './drag/DragProvider';
+
+const noSubscribe = () => () => {};
 
 /** What scrolls: a scroll view whose offsets reach the UI thread first-hand (`useAnimatedScrollHandler`), so a lifted item can be placed by them. */
 const Scroller = Animated.ScrollView as unknown as typeof ScrollView;
@@ -64,6 +67,8 @@ export function ReflowGrid<T>({
   touchRegions,
   layout,
   axis = 'vertical',
+  scrollEnabled = true,
+  initialSize,
   startInset: startProp,
   endInset: endProp,
   crossStartInset = 0,
@@ -73,6 +78,12 @@ export function ReflowGrid<T>({
   onReorder,
   canDrag,
   dragOverflow = 'hidden',
+  joinPolicy,
+  onJoin,
+  onSpringLoad,
+  onDragExit,
+  dragExitDelay,
+  continuesDrag = false,
   onDragStart,
   canSwipe,
   onSwipe,
@@ -104,7 +115,7 @@ export function ReflowGrid<T>({
   // A sideways grid's rows also clear what's pinned over its top and bottom .
   const crossStart = mainHorizontal ? crossStartInset : 0;
   const crossEnd = mainHorizontal ? crossEndInset : 0;
-  const [viewport, setViewport] = useState<Size>();
+  const [viewport, setViewport] = useState<Size | undefined>(initialSize);
   const rootRef = useRef<View>(null);
   // Where the grid sits on screen, from its last layout or touch: a touch is placed at once, not after an async measure that a quick tap can outrun.
   const origin = useRef<{ left: number; top: number } | undefined>(undefined);
@@ -118,13 +129,14 @@ export function ReflowGrid<T>({
     });
   }, []);
 
-  // Items taken out of `data` stay drawn until they've shrunk away (`leaving`, see `leaving.ts`).
-  const { leaving, leavingNow, taking, setLeaving } = useLeaving(data, keyExtractor);
-
   // Dragging (see `dragEngine.ts`): what's shown is `data` in the order of the drag's preview — after a
   // drop, in the order it left, until `data` follows (or a moment passes).
   const { engine, snap, items, draggedKeys, lifted } = useDragReorder<T>(data);
   const { drag, floating } = snap;
+
+  // Items taken out of `data` stay drawn until they've shrunk away (`leaving`, see `leaving.ts`). One that a join has put
+  // another item in the place of is just gone.
+  const { leaving, leavingNow, taking, setLeaving } = useLeaving(data, keyExtractor, (key) => key === engine.replaced?.from || engine.handedOff.has(key));
 
   // With `dragOverflow`, nothing is clipped from the lift until the dropped item has had time to settle back inside.
   const held = drag != null && floating;
@@ -150,6 +162,12 @@ export function ReflowGrid<T>({
   // Where it's scrolled to, and what that puts on screen (see `useScroll.ts`).
   const scroll = useScroll({ axis, ios, android, padded, insetX, insetY, crossStart, viewport, placed, lifted, dragging: drag != null, onScroll });
   const { offset, contentOf, windowOf } = scroll;
+
+  // What carries a drag to another grid, and the swipe a carried item is drawn with: none.
+  const carrier = useContext(DragContext);
+  const unswiped = useSharedValue(0);
+  // The item being carried between grids: the layer above draws it, so no grid shows it meanwhile.
+  const carriedKey = useSyncExternalStore(carrier?.subscribe ?? noSubscribe, () => carrier?.getSnapshot()?.key);
 
   // A finger's drag lifts the item itself, which follows the finger: a cell follows these.
   const fingerX = useSharedValue(0);
@@ -209,6 +227,9 @@ export function ReflowGrid<T>({
     draggedKeys,
     floating,
     finger,
+    drags: engine,
+    joinKey: drag?.join,
+    carriedKey,
     leaving,
     leavingNow,
     taking,
@@ -299,11 +320,28 @@ export function ReflowGrid<T>({
     instant,
     web: Platform.OS === 'web',
     onReorder,
+    joinOf: joinPolicy ? (item, index, slot) => joinPolicy(item, { index, size: { width: slot.width, height: slot.height }, dragging: false, joinTarget: false }) : undefined,
+    onJoin,
+    onSpringLoad,
+    onDragExit,
+    exitDelay: dragExitDelay,
+    carrier,
+    renderCarried: (item, index, size) => () => renderItem(item, { index, size, dragging: true, joinTarget: false, swipe: unswiped }),
     onDragStart,
     haptic,
     // The press this finger began is over: it's a drag now.
     onLift: touch.cancelPress,
   };
+  // A drag carried from another grid is this one's to take, if it's asked to and has the item (see `DragCarrier`).
+  useEffect(() => {
+    if (!continuesDrag || !carrier?.getSnapshot() || !placed) return;
+    // Measured now: it may have grown into place since it was laid out.
+    rootRef.current?.measureInWindow((left, top) => {
+      origin.current = { left, top };
+      carrier.offer(engine, continuesDrag === 'join');
+    });
+  }, [continuesDrag, carrier, engine, placed, data]);
+
   // On web a mouse drags through the browser's own drag and drop.
   const reorderable = onReorder != null;
   useEffect(() => {
@@ -375,7 +413,7 @@ export function ReflowGrid<T>({
         onScroll={scroll.onScrollUI as never}
         scrollEventThrottle={16}
         // A lifted item follows the finger, which must not scroll the grid as well.
-        scrollEnabled={!(drag && floating) && swipe.swiping === 0}
+        scrollEnabled={scrollEnabled && !(drag && floating) && !snap.carrying && swipe.swiping === 0}
         // A sideways grid's scroll view is as tall as its row, so its indicator sits under the tiles, not at the room's foot.
         style={[mainHorizontal && placed && roomHeight != null ? { height: Math.min(placed.size.height, roomHeight) } : undefined, paging.snapStyle, unclipped && styles.unclipped]}
         pagingEnabled={paging.pages != null && !paging.web}

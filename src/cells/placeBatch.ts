@@ -20,6 +20,7 @@ function apply(batch: Placement[]) {
   for (let i = 0; i < batch.length; i++) {
     const { v, x, y, w, h, dim } = batch[i]!;
     v.swipe.value = 0;
+    v.over.value = 0;
     v.x.value = x;
     v.y.value = y;
     v.w.value = w;
@@ -44,6 +45,7 @@ export function placeAtOnce(p: Placement) {
     // Shared values are plain JS here and set at once: there's no thread to cross, and a batch would only wait for the next frame.
     const { v, x, y, w, h, dim } = p;
     v.swipe.set(0);
+    v.over.set(0);
     v.x.set(x);
     v.y.set(y);
     v.w.set(w);

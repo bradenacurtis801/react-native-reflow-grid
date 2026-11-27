@@ -2,6 +2,9 @@
 export const MOVE = { damping: 26, stiffness: 320, mass: 0.9 };
 /** About how long (ms) a dropped item takes to spring into its slot. */
 export const DROP_SETTLE_MS = 450;
+/** An item joining another goes to it and shrinks into it over this long (ms), to this size. */
+export const JOIN_MS = 240;
+export const JOIN_SCALE = 0.2;
 /** A cell leaving shrinks and fades over this long (ms). */
 export const LEAVE_MS = 180;
 export const LEAVE_SCALE = 0.5;
