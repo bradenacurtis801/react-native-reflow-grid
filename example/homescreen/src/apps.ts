@@ -141,3 +141,15 @@ export const DOCK: Entry[] = [
 
 /** What an entry's badge says: its own, or its apps' together. */
 export const badgeOf = (entry: Entry) => (entry.kind === 'app' ? (entry.badge ?? 0) : entry.apps.reduce((sum, a) => sum + (a.badge ?? 0), 0));
+
+/**
+ * `entries` with the app `dragged` joined to `target`: into it if it's a folder, and with it into a new one, in its place, if
+ * it's an app. `id` is what the entry in the target's place is called then. Nothing for what can't be joined.
+ */
+export function joined(entries: readonly Entry[], dragged: string, target: string, newId: string): { entries: Entry[]; id: string } | undefined {
+  const from = entries.find((e) => e.id === dragged);
+  const onto = entries.find((e) => e.id === target);
+  if (from?.kind !== 'app' || !onto) return undefined;
+  const into: FolderItem = onto.kind === 'folder' ? { ...onto, apps: [...onto.apps, from] } : { kind: 'folder', id: newId, name: 'Folder', apps: [onto, from] };
+  return { entries: entries.flatMap((e) => (e.id === dragged ? [] : e.id === target ? [into] : [e])), id: into.id };
+}
