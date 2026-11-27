@@ -13,7 +13,7 @@ Safari's tab overview, built on the grid.
 
 The cards take no touches of their own (the grid handles tap, drag and swipe), and the open page is an overlay outside the grid, so its content is the app's. See the [main README](../../README.md) for the grid's props.
 
-It adds `expo-glass-effect`.
+It adds `expo-glass-effect`, `expo-haptics` (a tap when a pinch takes hold, and the grid's own while dragging) and `react-native-gesture-handler` (the pinch).
 
 ## Run it
 
