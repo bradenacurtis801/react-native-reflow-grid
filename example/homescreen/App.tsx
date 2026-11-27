@@ -3,10 +3,11 @@ import { useCallback, useMemo, useRef, useState, type ComponentRef } from 'react
 import { StyleSheet, useWindowDimensions, View } from 'react-native';
 import { ReduceMotion } from 'react-native-reanimated';
 import { layoutFromRects, pagedLayout, ReflowDragProvider, ReflowGrid, type DragResult, type ItemRenderInfo, type JoinResult, type ReflowLayout } from 'react-native-reflow-grid';
-import { DOCK, HOME, joined, type Entry, type FolderItem } from './src/apps';
+import { DOCK, HOME, joined, SAFARI, type AppItem, type Entry, type FolderItem } from './src/apps';
 import { FolderOverlay, type Frame } from './src/FolderOverlay';
 import { Glass } from './src/Glass';
 import { Icon } from './src/Icon';
+import { SafariWindow } from './src/SafariWindow';
 import { BADGE_ROOM, DOCK_H, DOCK_SIDE, LABEL_GAP, LABEL_H, makeMetrics, MetricsContext, SIDE, useMetrics } from './src/metrics';
 import { Wallpaper } from './src/Wallpaper';
 
@@ -58,7 +59,10 @@ function HomeScreen() {
   const open = overlays.find((o) => !o.ejected);
   // Which of the pages and the dock is drawn over the other: the one an icon was last lifted from, so it passes over.
   const [front, setFront] = useState<'pages' | 'dock'>('pages');
-  // Each folder's square, to measure where it opens from.
+  // Safari, from the first time it's opened: it stays running when closed.
+  const [safari, setSafari] = useState<{ app: AppItem; frame: Frame; closing: boolean; gone: boolean } | null>(null);
+  const safariUp = safari != null && !safari.gone;
+  // Each square that opens something, to measure where it opens from.
   const squares = useRef(new Map<string, ComponentRef<typeof View>>());
 
   const folderOf = (id: string) => [...home, ...dock].find((e): e is FolderItem => e.id === id && e.kind === 'folder');
@@ -71,6 +75,11 @@ function HomeScreen() {
       setOverlays((all) => (all.some((o) => o.id === id) ? all.map((o) => (o.id === id ? next : o)) : [...all, next]));
     });
   }, []);
+  const openSafari = useCallback((app: AppItem) => {
+    squares.current.get(app.id)?.measureInWindow((x, y, w, h) => setSafari({ app, frame: { x, y, w, h }, closing: false, gone: false }));
+  }, []);
+  const closeSafari = useCallback(() => setSafari((s) => s && { ...s, closing: true }), []);
+  const safariClosed = useCallback(() => setSafari((s) => s && { ...s, gone: true }), []);
   const close = useCallback((id: string, page: number) => change(id, { closing: true, page }), [change]);
   // Closed: away with it, unless a drag has left it, which may still need it.
   const closed = useCallback((id: string) => setOverlays((all) => all.flatMap((o) => (o.id !== id ? [o] : o.ejected ? [{ ...o, gone: true }] : []))), []);
@@ -209,22 +218,30 @@ function HomeScreen() {
   const pagePolicy = useCallback((e: Entry) => policy(e, (cellW - icon) / 2, BADGE_ROOM), [policy, cellW, icon]);
   const dockPolicy = useCallback((e: Entry) => policy(e, (dockCell - icon) / 2, (DOCK_H - icon) / 2), [policy, dockCell, icon]);
 
-  // A folder is pressed on its square and name, and nowhere else in its cell.
+  // What a press on an entry opens: a folder, or Safari. The other apps are only pictures.
+  const opens = useCallback((e: Entry) => (e.kind === 'folder' ? () => openFolder(e.id) : e.id === SAFARI ? () => openSafari(e) : undefined), [openFolder, openSafari]);
+  // Pressed on its square and name, and nowhere else in its cell.
   const pageRegions = useCallback(
-    (e: Entry) => (e.kind === 'folder' ? [{ key: 'open', rect: { x: (cellW - icon) / 2, y: BADGE_ROOM, width: icon, height: icon + LABEL_GAP + LABEL_H }, onPress: () => openFolder(e.id) }] : []),
-    [cellW, icon, openFolder],
+    (e: Entry) => {
+      const onPress = opens(e);
+      return onPress ? [{ key: 'open', rect: { x: (cellW - icon) / 2, y: BADGE_ROOM, width: icon, height: icon + LABEL_GAP + LABEL_H }, onPress }] : [];
+    },
+    [cellW, icon, opens],
   );
   const dockRegions = useCallback(
-    (e: Entry) => (e.kind === 'folder' ? [{ key: 'open', rect: { x: (dockCell - icon) / 2, y: (DOCK_H - icon) / 2, width: icon, height: icon }, onPress: () => openFolder(e.id) }] : []),
-    [dockCell, icon, openFolder],
+    (e: Entry) => {
+      const onPress = opens(e);
+      return onPress ? [{ key: 'open', rect: { x: (dockCell - icon) / 2, y: (DOCK_H - icon) / 2, width: icon, height: icon }, onPress }] : [];
+    },
+    [dockCell, icon, opens],
   );
 
   // The square of a folder whose pane is out is moved out of sight, not faded: the pane has grown out of it.
   const out = useMemo(() => new Map(overlays.filter((o) => !o.gone).map((o) => [o.id, o.page])), [overlays]);
-  // A folder's cell also marks where its square is, to open it from. The marker stays when the square is moved away.
+  // What opens also marks where its square is, to grow from. The marker stays when the square is moved away.
   const mark = useCallback(
     (e: Entry, top?: number) =>
-      e.kind === 'folder' ? (
+      e.kind === 'folder' || e.id === SAFARI ? (
         <View
           ref={(node) => {
             if (node) squares.current.set(e.id, node);
@@ -241,21 +258,21 @@ function HomeScreen() {
       <View style={styles.pageCell}>
         {/* Not in a lifted copy, which may be drawn elsewhere: a folder is measured where it sits. */}
         {dragging ? null : mark(e, BADGE_ROOM)}
-        <Icon entry={e} size={icon} away={out.has(e.id)} page={out.get(e.id) ?? 0} highlighted={joinTarget} dragging={dragging} />
+        <Icon entry={e} size={icon} away={out.has(e.id) || (safariUp && e.id === SAFARI)} page={out.get(e.id) ?? 0} highlighted={joinTarget} dragging={dragging} />
       </View>
     ),
-    [mark, icon, out],
+    [mark, icon, out, safariUp],
   );
   const renderDocked = useCallback(
     (e: Entry, { joinTarget, dragging }: ItemRenderInfo) => (
       <View style={styles.dockCell}>
         {dragging ? null : mark(e)}
         <View style={{ width: icon }}>
-          <Icon entry={e} size={icon} label={false} away={out.has(e.id)} page={out.get(e.id) ?? 0} highlighted={joinTarget} />
+          <Icon entry={e} size={icon} label={false} away={out.has(e.id) || (safariUp && e.id === SAFARI)} page={out.get(e.id) ?? 0} highlighted={joinTarget} />
         </View>
       </View>
     ),
-    [mark, icon, out],
+    [mark, icon, out, safariUp],
   );
 
   return (
@@ -263,7 +280,7 @@ function HomeScreen() {
     <ReflowDragProvider onDragEnd={dragEnded}>
       <View style={styles.root}>
         <Wallpaper />
-        <View style={StyleSheet.absoluteFill} pointerEvents={open ? 'none' : 'auto'}>
+        <View style={StyleSheet.absoluteFill} pointerEvents={open || (safari && !safari.closing) ? 'none' : 'auto'}>
           {/* The dock first, so an icon lifted from the pages passes over it. The glass is behind the dock's grid, not around it,
               so it can't clip an icon that's carried out. */}
           <View style={[styles.dock, { bottom: dockBottom, zIndex: front === 'dock' ? 1 : 0 }]}>
@@ -324,6 +341,7 @@ function HomeScreen() {
             <FolderOverlay key={o.id} folder={folder} frame={o.frame} closing={o.closing} ejected={o.ejected} gone={o.gone} onClose={close} onClosed={closed} onReorder={reorderFolder} onEject={eject} />
           ) : null;
         })}
+        {safari ? <SafariWindow app={safari.app} frame={safari.frame} closing={safari.closing} gone={safari.gone} onHome={closeSafari} onClosed={safariClosed} /> : null}
       </View>
     </ReflowDragProvider>
   );

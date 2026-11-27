@@ -5,6 +5,7 @@
     "version": "1.0.0",
     "orientation": "portrait",
     "userInterfaceStyle": "light",
+    "experiments": { "tsconfigPaths": false },
     "ios": { "bundleIdentifier": "dev.reflowgrid.homescreen" },
     "android": { "package": "dev.reflowgrid.homescreen" }
   }

@@ -2,6 +2,18 @@
   "extends": "expo/tsconfig.base",
   "compilerOptions": {
     "strict": true,
-    "paths": { "react-native-reflow-grid": ["../../src/index.ts"] }
+    // The Safari example's files are imported from next door: what they import is this app's copy. Types only: Metro does
+    // its own (`metro.config.js`), and is told to leave these alone (`app.json`).
+    "paths": {
+      "react-native-reflow-grid": ["../../src/index.ts"],
+      "react": ["./node_modules/@types/react"],
+      "react/jsx-runtime": ["./node_modules/@types/react/jsx-runtime"],
+      "react-native": ["./node_modules/react-native/types_DEPRECATED/index.d.ts"],
+      "react-native-reanimated": ["./node_modules/react-native-reanimated"],
+      "react-native-worklets": ["./node_modules/react-native-worklets"],
+      "react-native-gesture-handler": ["./node_modules/react-native-gesture-handler"],
+      "expo-glass-effect": ["./node_modules/expo-glass-effect"],
+      "expo-haptics": ["./node_modules/expo-haptics"]
+    }
   }
 }

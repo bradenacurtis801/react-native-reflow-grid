@@ -132,9 +132,12 @@ export const HOME: Entry[] = [
   app('Drive Mode', 'car', 'indigo'),
 ];
 
+/** The app that opens: the Safari example. */
+export const SAFARI = 'app-Safari';
+
 export const DOCK: Entry[] = [
   app('Phone', 'phone', 'green', { badge: 121 }),
-  app('Browser', 'compass', 'white'),
+  app('Safari', 'compass', 'white'),
   folder('Chat', [app('Messages', 'message', 'green', { badge: 855 }), app('Assistant', 'bolt', 'white', { ink: '#111' }), app('Console', 'terminal', 'black'), app('Builder', 'wrench', 'indigo'), app('Rooms', 'message', 'purple'), app('Radar', 'wave', 'gray')]),
   app('Music', 'music', 'red'),
 ];

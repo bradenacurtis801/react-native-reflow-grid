@@ -10,11 +10,13 @@ An iOS home screen, built on the grid.
 - **The dock.** A one-row grid in a pane of glass, with a layout of its own that centres what's there. Drag icons out of it and into it (while it has room for four): they change sides as the finger does (`onDragExit`, `continuesDrag`).
 - **The glass.** `expo-glass-effect` (iOS 26's liquid glass); a pale translucent pane elsewhere.
 
+- **Safari.** Tap its tile and the [Safari example](../safari) itself opens, grown from the icon; the round house button puts it back. It's imported from the folder next door (`metro.config.js`), and keeps its tabs while closed.
+
 The apps are made up: a gradient and a symbol (`expo-symbols`) each.
 
 A full dock takes nothing in, but an app held over it can still be dropped on what's there, or held on it until it opens (`continuesDrag="join"`).
 
-It adds `expo-blur`, `expo-glass-effect`, `expo-haptics`, `expo-status-bar` and `expo-symbols`.
+It adds `react-native-gesture-handler` (for Safari), `expo-blur`, `expo-glass-effect`, `expo-haptics`, `expo-status-bar` and `expo-symbols`.
 
 ## Run it
 

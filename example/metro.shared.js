@@ -8,8 +8,9 @@ const under = (folder) => new RegExp(`${folder.split(/[\\/]/).map(escapeRegExp).
 /**
  * The Metro config both example apps use: the library comes from the folder above `example/`, as source,
  * so an edit shows up without a build. `projectDir` is the app's own folder, and `getDefaultConfig` its `expo/metro-config`.
+ * `includes` names other example apps this one imports from: they're bundled too, with this app's packages.
  */
-module.exports = function metroConfig(projectDir, getDefaultConfig) {
+module.exports = function metroConfig(projectDir, getDefaultConfig, { includes = [] } = {}) {
   const root = path.resolve(projectDir, '..', '..');
   const examples = path.resolve(projectDir, '..');
   const config = getDefaultConfig(projectDir);
@@ -28,8 +29,17 @@ module.exports = function metroConfig(projectDir, getDefaultConfig) {
   // Not bundled, and not watched: the library's own node_modules (dev copies of the above), and the other apps.
   const others = fs
     .readdirSync(examples, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory() && path.join(examples, entry.name) !== projectDir)
+    .filter((entry) => entry.isDirectory() && path.join(examples, entry.name) !== projectDir && !includes.includes(entry.name))
     .map((entry) => path.join(examples, entry.name));
-  config.resolver.blockList = [root, ...others].map((folder) => under(folder === root ? path.join(root, 'node_modules') : folder));
+  const included = includes.map((name) => path.join(examples, name));
+  // An included app's own packages, if it has them installed, are left out: it runs on this app's.
+  config.resolver.blockList = [path.join(root, 'node_modules'), ...others, ...included.map((folder) => path.join(folder, 'node_modules'))].map(under);
+  if (included.length) {
+    // What an included app imports by name is looked for as if this app had asked, so there's one copy of React and the rest.
+    config.resolver.resolveRequest = (context, name, platform) => {
+      const theirs = !name.startsWith('.') && !path.isAbsolute(name) && included.some((folder) => context.originModulePath.startsWith(folder + path.sep));
+      return context.resolveRequest(theirs ? { ...context, originModulePath: path.join(projectDir, 'index.ts') } : context, name, platform);
+    };
+  }
   return config;
 };
