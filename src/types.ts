@@ -128,6 +128,14 @@ export interface ReflowGridProps<T> {
   onReorder?: (result: DragResult) => void;
   /** Whether an item can be dragged. @default every item can */
   canDrag?: (item: T, index: number) => boolean;
+  /**
+   * Whether an item lifted by a finger may be drawn outside the grid. `'visible'`: from the lift until it has settled
+   * after the drop, the grid doesn't clip what it draws, so the item can be carried anywhere (over a bar or another
+   * view; give the grid a `zIndex` or render it after what the item should pass over). Cells just past the grid's
+   * edges show then too, so it suits a grid whose edges are the screen's, or whose neighbours are out of sight.
+   * @default 'hidden'
+   */
+  dragOverflow?: 'visible' | 'hidden';
   /** A drag has begun: called with what was lifted (see `DragSession`). (Haptic feedback is `haptics`.) */
   onDragStart?: (session: DragSession) => void;
   /**

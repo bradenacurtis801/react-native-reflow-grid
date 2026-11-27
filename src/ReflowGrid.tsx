@@ -1,12 +1,12 @@
 import { Profiler, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Platform, ScrollView, View, type LayoutChangeEvent } from 'react-native';
+import { Platform, ScrollView, StyleSheet, View, type LayoutChangeEvent } from 'react-native';
 import Animated, { ReduceMotion, useAnimatedStyle, useReducedMotion, useSharedValue, withSpring } from 'react-native-reanimated';
 
 import { resolveHaptics, expoHaptics } from './support/haptics';
 import type { Size } from './layout';
 import { useLeaving } from './cells/leaving';
 import { loadExpoHaptics } from './support/loadExpoHaptics';
-import { MOVE } from './cells/motion';
+import { DROP_SETTLE_MS, MOVE } from './cells/motion';
 import { now, perfLog, perfOn } from './support/perfLog';
 import { swipeAllowed } from './swipe/swipe';
 import type { Finger, ReflowGridProps, Slot } from './types';
@@ -72,6 +72,7 @@ export function ReflowGrid<T>({
   onScroll,
   onReorder,
   canDrag,
+  dragOverflow = 'hidden',
   onDragStart,
   canSwipe,
   onSwipe,
@@ -124,6 +125,19 @@ export function ReflowGrid<T>({
   // drop, in the order it left, until `data` follows (or a moment passes).
   const { engine, snap, items, draggedKeys, lifted } = useDragReorder<T>(data);
   const { drag, floating } = snap;
+
+  // With `dragOverflow`, nothing is clipped from the lift until the dropped item has had time to settle back inside.
+  const held = drag != null && floating;
+  const [settling, setSettling] = useState(false);
+  useEffect(() => {
+    if (held) {
+      setSettling(true);
+      return;
+    }
+    const timer = setTimeout(() => setSettling(false), DROP_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [held]);
+  const unclipped = dragOverflow === 'visible' && (held || settling);
 
   // The layout's room: the viewport, less the cross-axis insets (a sideways grid's rows sit between them).
   const roomWidth = viewport?.width;
@@ -363,7 +377,7 @@ export function ReflowGrid<T>({
         // A lifted item follows the finger, which must not scroll the grid as well.
         scrollEnabled={!(drag && floating) && swipe.swiping === 0}
         // A sideways grid's scroll view is as tall as its row, so its indicator sits under the tiles, not at the room's foot.
-        style={[mainHorizontal && placed && roomHeight != null ? { height: Math.min(placed.size.height, roomHeight) } : undefined, paging.snapStyle]}
+        style={[mainHorizontal && placed && roomHeight != null ? { height: Math.min(placed.size.height, roomHeight) } : undefined, paging.snapStyle, unclipped && styles.unclipped]}
         pagingEnabled={paging.pages != null && !paging.web}
         // A one-axis grid scrolls only along its axis: no bounce, and no drift across. Two axes lock nothing.
         alwaysBounceVertical={!mainHorizontal}
@@ -389,3 +403,7 @@ export function ReflowGrid<T>({
     rootView
   );
 }
+
+const styles = StyleSheet.create({
+  unclipped: { overflow: 'visible' },
+});

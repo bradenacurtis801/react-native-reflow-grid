@@ -1,5 +1,7 @@
 /** How cells glide to a new place: a quick spring, so one set going while another is still moving carries on from where it is. */
 export const MOVE = { damping: 26, stiffness: 320, mass: 0.9 };
+/** About how long (ms) a dropped item takes to spring into its slot. */
+export const DROP_SETTLE_MS = 450;
 /** A cell leaving shrinks and fades over this long (ms). */
 export const LEAVE_MS = 180;
 export const LEAVE_SCALE = 0.5;
