@@ -1,0 +1,11 @@
+{
+  "expo": {
+    "name": "Reflow Grid Home",
+    "slug": "reflow-grid-homescreen",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": { "bundleIdentifier": "dev.reflowgrid.homescreen" },
+    "android": { "package": "dev.reflowgrid.homescreen" }
+  }
+}
